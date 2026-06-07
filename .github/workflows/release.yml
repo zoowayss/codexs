@@ -1,0 +1,189 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'  # 匹配所有 v 开头的 tag，如 v1.0.0, v2.1.3
+
+permissions:
+  contents: write  # 允许创建 release
+
+jobs:
+  build:
+    name: Build ${{ matrix.os }}-${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          # Linux
+          - os: linux
+            arch: amd64
+            runner: ubuntu-latest
+            goos: linux
+            goarch: amd64
+          - os: linux
+            arch: arm64
+            runner: ubuntu-latest
+            goos: linux
+            goarch: arm64
+
+          # macOS
+          - os: darwin
+            arch: amd64
+            runner: macos-latest
+            goos: darwin
+            goarch: amd64
+          - os: darwin
+            arch: arm64
+            runner: macos-latest
+            goos: darwin
+            goarch: arm64
+
+          # Windows
+          - os: windows
+            arch: amd64
+            runner: ubuntu-latest
+            goos: windows
+            goarch: amd64
+          - os: windows
+            arch: arm64
+            runner: ubuntu-latest
+            goos: windows
+            goarch: arm64
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Get tag name
+        id: tag
+        run: echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          # 构建二进制文件
+          OUTPUT_NAME=codexs-${{ steps.tag.outputs.tag }}-${{ matrix.os }}-${{ matrix.arch }}
+          if [ "${{ matrix.os }}" = "windows" ]; then
+            OUTPUT_NAME="${OUTPUT_NAME}.exe"
+          fi
+
+          go build -ldflags="-s -w -X main.Version=${{ steps.tag.outputs.tag }}" \
+            -o "${OUTPUT_NAME}" \
+            ./cmd/codexs
+
+      - name: Create archive
+        run: |
+          TAG=${{ steps.tag.outputs.tag }}
+          ARCHIVE_NAME=codexs-${TAG}-${{ matrix.os }}-${{ matrix.arch }}
+
+          if [ "${{ matrix.os }}" = "windows" ]; then
+            BINARY_NAME=codexs-${TAG}-${{ matrix.os }}-${{ matrix.arch }}.exe
+            zip "${ARCHIVE_NAME}.zip" "${BINARY_NAME}" README.md
+            echo "ASSET=${ARCHIVE_NAME}.zip" >> $GITHUB_ENV
+          else
+            BINARY_NAME=codexs-${TAG}-${{ matrix.os }}-${{ matrix.arch }}
+            tar czf "${ARCHIVE_NAME}.tar.gz" "${BINARY_NAME}" README.md
+            echo "ASSET=${ARCHIVE_NAME}.tar.gz" >> $GITHUB_ENV
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: codexs-${{ matrix.os }}-${{ matrix.arch }}
+          path: ${{ env.ASSET }}
+          retention-days: 1
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get tag name
+        id: tag
+        run: echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          PREVIOUS_TAG=$(git tag --sort=-version:refname | grep -v "^${{ steps.tag.outputs.tag }}$" | head -n 1)
+
+          if [ -z "$PREVIOUS_TAG" ]; then
+            CHANGELOG=$(git log --pretty=format:"- %s (%h)" --no-merges)
+          else
+            CHANGELOG=$(git log ${PREVIOUS_TAG}..${{ steps.tag.outputs.tag }} --pretty=format:"- %s (%h)" --no-merges)
+          fi
+
+          echo "changelog<<EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGELOG" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: Release ${{ steps.tag.outputs.tag }}
+          body: |
+            ## Changes in ${{ steps.tag.outputs.tag }}
+
+            ${{ steps.changelog.outputs.changelog }}
+
+            ## Installation
+
+            Download the appropriate binary for your platform below.
+
+            ### Linux
+            ```bash
+            # AMD64
+            wget https://github.com/${{ github.repository }}/releases/download/${{ steps.tag.outputs.tag }}/codexs-${{ steps.tag.outputs.tag }}-linux-amd64.tar.gz
+            tar xzf codexs-${{ steps.tag.outputs.tag }}-linux-amd64.tar.gz
+            chmod +x codexs-${{ steps.tag.outputs.tag }}-linux-amd64
+            sudo mv codexs-${{ steps.tag.outputs.tag }}-linux-amd64 /usr/local/bin/codexs
+
+            # ARM64
+            wget https://github.com/${{ github.repository }}/releases/download/${{ steps.tag.outputs.tag }}/codexs-${{ steps.tag.outputs.tag }}-linux-arm64.tar.gz
+            tar xzf codexs-${{ steps.tag.outputs.tag }}-linux-arm64.tar.gz
+            chmod +x codexs-${{ steps.tag.outputs.tag }}-linux-arm64
+            sudo mv codexs-${{ steps.tag.outputs.tag }}-linux-arm64 /usr/local/bin/codexs
+            ```
+
+            ### macOS
+            ```bash
+            # Intel (AMD64)
+            wget https://github.com/${{ github.repository }}/releases/download/${{ steps.tag.outputs.tag }}/codexs-${{ steps.tag.outputs.tag }}-darwin-amd64.tar.gz
+            tar xzf codexs-${{ steps.tag.outputs.tag }}-darwin-amd64.tar.gz
+            chmod +x codexs-${{ steps.tag.outputs.tag }}-darwin-amd64
+            sudo mv codexs-${{ steps.tag.outputs.tag }}-darwin-amd64 /usr/local/bin/codexs
+
+            # Apple Silicon (ARM64)
+            wget https://github.com/${{ github.repository }}/releases/download/${{ steps.tag.outputs.tag }}/codexs-${{ steps.tag.outputs.tag }}-darwin-arm64.tar.gz
+            tar xzf codexs-${{ steps.tag.outputs.tag }}-darwin-arm64.tar.gz
+            chmod +x codexs-${{ steps.tag.outputs.tag }}-darwin-arm64
+            sudo mv codexs-${{ steps.tag.outputs.tag }}-darwin-arm64 /usr/local/bin/codexs
+            ```
+
+            ### Windows
+            Download the `.zip` file for your architecture and extract it.
+
+            **Full Changelog**: https://github.com/${{ github.repository }}/compare/${{ steps.tag.outputs.tag }}
+          files: artifacts/**/*
+          draft: false
+          prerelease: false
+          make_latest: true
