@@ -132,7 +132,7 @@ func (s *Store) AddProfile(name, baseURL, apiKey string, now time.Time) (Profile
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
-	if err := s.writeProfileFiles(profile, apiKey); err != nil {
+	if err := s.writeProfileFiles(profile, apiKey, true); err != nil {
 		return Profile{}, err
 	}
 	state.Profiles[name] = profile
@@ -169,7 +169,9 @@ func (s *Store) UpdateProfile(name string, baseURL string, apiKey *string, now t
 		key = *apiKey
 	}
 	profile.UpdatedAt = now
-	if err := s.writeProfileFiles(profile, key); err != nil {
+	// Force regenerate config.toml when base_url changes
+	forceConfig := baseURL != ""
+	if err := s.writeProfileFiles(profile, key, forceConfig); err != nil {
 		return Profile{}, err
 	}
 	state.Profiles[name] = profile
@@ -233,17 +235,24 @@ func (s *Store) ListProfiles() ([]Profile, error) {
 }
 
 func (s *Store) PrepareProfile(profile Profile) error {
-	return s.writeProfileFiles(profile, "")
+	return s.writeProfileFiles(profile, "", false)
 }
 
-func (s *Store) writeProfileFiles(profile Profile, apiKey string) error {
+func (s *Store) writeProfileFiles(profile Profile, apiKey string, forceConfig bool) error {
 	codexHome := s.CodexHome(profile.Name)
 	if err := os.MkdirAll(codexHome, 0o700); err != nil {
 		return fmt.Errorf("create %s: %w", codexHome, err)
 	}
 	configPath := filepath.Join(codexHome, "config.toml")
-	if err := os.WriteFile(configPath, []byte(renderCodexConfig(profile.BaseURL)), 0o600); err != nil {
-		return fmt.Errorf("write %s: %w", configPath, err)
+	// Only create/overwrite config.toml if it doesn't exist or forceConfig is true
+	if forceConfig {
+		if err := os.WriteFile(configPath, []byte(renderCodexConfig(profile.BaseURL)), 0o600); err != nil {
+			return fmt.Errorf("write %s: %w", configPath, err)
+		}
+	} else if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		if err := os.WriteFile(configPath, []byte(renderCodexConfig(profile.BaseURL)), 0o600); err != nil {
+			return fmt.Errorf("write %s: %w", configPath, err)
+		}
 	}
 	if apiKey != "" {
 		auth := map[string]string{"OPENAI_API_KEY": apiKey}
