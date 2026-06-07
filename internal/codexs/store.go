@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/pelletier/go-toml/v2"
 )
 
 type Store struct {
@@ -154,13 +156,34 @@ func (s *Store) UpdateProfile(name string, baseURL string, apiKey *string, now t
 	if !exists {
 		return Profile{}, fmt.Errorf("profile %q does not exist", name)
 	}
+
+	// Update base_url in profile state
 	if baseURL != "" {
 		normalizedBaseURL, err := normalizeBaseURL(baseURL)
 		if err != nil {
 			return Profile{}, err
 		}
 		profile.BaseURL = normalizedBaseURL
+
+		// Try to update config.toml in-place, fallback to full regeneration
+		configPath := filepath.Join(s.CodexHome(profile.Name), "config.toml")
+		if _, err := os.Stat(configPath); err == nil {
+			// Config exists, try to update only the base_url value
+			if err := s.updateConfigValue(configPath, "model_providers.profile.base_url", normalizedBaseURL); err != nil {
+				// Fallback: regenerate the entire config
+				if err := os.WriteFile(configPath, []byte(renderCodexConfig(normalizedBaseURL)), 0o600); err != nil {
+					return Profile{}, fmt.Errorf("write %s: %w", configPath, err)
+				}
+			}
+		} else {
+			// Config doesn't exist, create it
+			if err := s.writeProfileFiles(profile, "", true); err != nil {
+				return Profile{}, err
+			}
+		}
 	}
+
+	// Update API key if provided
 	var key string
 	if apiKey != nil {
 		if *apiKey == "" {
@@ -168,12 +191,13 @@ func (s *Store) UpdateProfile(name string, baseURL string, apiKey *string, now t
 		}
 		key = *apiKey
 	}
-	profile.UpdatedAt = now
-	// Force regenerate config.toml when base_url changes
-	forceConfig := baseURL != ""
-	if err := s.writeProfileFiles(profile, key, forceConfig); err != nil {
-		return Profile{}, err
+	if key != "" {
+		if err := s.writeProfileFiles(profile, key, false); err != nil {
+			return Profile{}, err
+		}
 	}
+
+	profile.UpdatedAt = now
 	state.Profiles[name] = profile
 	if err := s.Save(state); err != nil {
 		return Profile{}, err
@@ -236,6 +260,46 @@ func (s *Store) ListProfiles() ([]Profile, error) {
 
 func (s *Store) PrepareProfile(profile Profile) error {
 	return s.writeProfileFiles(profile, "", false)
+}
+
+// updateConfigValue updates a specific value in config.toml without overwriting the entire file
+// keyPath examples: "model_providers.profile.base_url", "some_key"
+func (s *Store) updateConfigValue(configPath string, keyPath string, value interface{}) error {
+	// Read existing config
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return fmt.Errorf("read config: %w", err)
+	}
+
+	// Parse TOML
+	var config map[string]interface{}
+	if err := toml.Unmarshal(data, &config); err != nil {
+		return fmt.Errorf("parse config: %w", err)
+	}
+
+	// Navigate to the nested key and update it
+	keys := strings.Split(keyPath, ".")
+	current := config
+	for i := 0; i < len(keys)-1; i++ {
+		if next, ok := current[keys[i]].(map[string]interface{}); ok {
+			current = next
+		} else {
+			return fmt.Errorf("key path %q not found at %q", keyPath, keys[i])
+		}
+	}
+	current[keys[len(keys)-1]] = value
+
+	// Write back
+	updatedData, err := toml.Marshal(config)
+	if err != nil {
+		return fmt.Errorf("marshal config: %w", err)
+	}
+
+	if err := os.WriteFile(configPath, updatedData, 0o600); err != nil {
+		return fmt.Errorf("write config: %w", err)
+	}
+
+	return nil
 }
 
 func (s *Store) writeProfileFiles(profile Profile, apiKey string, forceConfig bool) error {
