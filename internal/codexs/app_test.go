@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -216,5 +217,115 @@ func TestStoreFindProfileForSession(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("FindProfileForSession error = %v, want 'not found'", err)
+	}
+}
+
+func TestStoreFindProfileForSessionWithCache(t *testing.T) {
+	root := t.TempDir()
+	store := NewStoreAt(root)
+	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
+
+	// Add a profile
+	_, err := store.AddProfile("work", "https://api.openai.com/v1", "test-key", now)
+	if err != nil {
+		t.Fatalf("AddProfile returned error: %v", err)
+	}
+
+	// Create a fake session file
+	sessionID := "019ea0e2-d130-7022-a3bd-e92e28e22397"
+	sessionsDir := filepath.Join(store.CodexHome("work"), "sessions", "2026", "06", "07")
+	if err := os.MkdirAll(sessionsDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll returned error: %v", err)
+	}
+	sessionFile := filepath.Join(sessionsDir, "rollout-2026-06-07T12-00-00-"+sessionID+".jsonl")
+	if err := os.WriteFile(sessionFile, []byte("test"), 0o644); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+
+	// First call - should scan and populate cache
+	profileName, err := store.FindProfileForSession(sessionID)
+	if err != nil {
+		t.Fatalf("FindProfileForSession returned error: %v", err)
+	}
+	if profileName != "work" {
+		t.Fatalf("FindProfileForSession returned %q, want %q", profileName, "work")
+	}
+
+	// Verify cache was populated
+	cache, err := store.LoadSessionCache()
+	if err != nil {
+		t.Fatalf("LoadSessionCache returned error: %v", err)
+	}
+	if cachedProfile, ok := cache.Sessions[sessionID]; !ok || cachedProfile != "work" {
+		t.Fatalf("cache.Sessions[%q] = %q, want %q", sessionID, cachedProfile, "work")
+	}
+
+	// Second call - should use cache (we can verify by deleting the session file)
+	if err := os.Remove(sessionFile); err != nil {
+		t.Fatalf("Remove returned error: %v", err)
+	}
+
+	// Should still find it from cache
+	profileName, err = store.FindProfileForSession(sessionID)
+	if err != nil {
+		t.Fatalf("FindProfileForSession (from cache) returned error: %v", err)
+	}
+	if profileName != "work" {
+		t.Fatalf("FindProfileForSession (from cache) returned %q, want %q", profileName, "work")
+	}
+}
+
+// Benchmark tests
+func BenchmarkValidateProfileName(b *testing.B) {
+	validNames := []string{"work", "team-a", "team_a", "project.prod", "A1B2"}
+	for i := 0; i < b.N; i++ {
+		for _, name := range validNames {
+			_ = validateProfileName(name)
+		}
+	}
+}
+
+func BenchmarkParseProfilesAndCodexArgs(b *testing.B) {
+	args := []string{"work", "side", "prod", "--", "-C", "/tmp/repo", "-v"}
+	for i := 0; i < b.N; i++ {
+		_, _, _ = parseProfilesAndCodexArgs(args)
+	}
+}
+
+func BenchmarkBuildRunShellCommand(b *testing.B) {
+	path := "/usr/local/bin/codexs"
+	profile := "work"
+	args := []string{"-C", "/home/user/project", "--verbose"}
+	for i := 0; i < b.N; i++ {
+		_ = buildRunShellCommand(path, profile, args)
+	}
+}
+
+func BenchmarkStoreAddProfile(b *testing.B) {
+	root := b.TempDir()
+	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		store := NewStoreAt(filepath.Join(root, fmt.Sprintf("bench_%d", i)))
+		_, _ = store.AddProfile("work", "https://api.openai.com/v1", "test-key", now)
+	}
+}
+
+func BenchmarkStoreFindProfileForSession(b *testing.B) {
+	root := b.TempDir()
+	store := NewStoreAt(root)
+	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
+
+	// Setup
+	_, _ = store.AddProfile("work", "https://api.openai.com/v1", "test-key", now)
+	sessionID := "019ea0e2-d130-7022-a3bd-e92e28e22397"
+	sessionsDir := filepath.Join(store.CodexHome("work"), "sessions", "2026", "06", "07")
+	_ = os.MkdirAll(sessionsDir, 0o755)
+	sessionFile := filepath.Join(sessionsDir, "rollout-2026-06-07T12-00-00-"+sessionID+".jsonl")
+	_ = os.WriteFile(sessionFile, []byte("test"), 0o644)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = store.FindProfileForSession(sessionID)
 	}
 }

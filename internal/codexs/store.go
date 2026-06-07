@@ -264,11 +264,25 @@ func (s *Store) FindProfileForSession(sessionID string) (string, error) {
 	if sessionID == "" {
 		return "", errors.New("session ID is required")
 	}
+
+	// Try cache first
+	cache, err := s.LoadSessionCache()
+	if err == nil {
+		if profileName, ok := cache.Sessions[sessionID]; ok {
+			// Verify the profile still exists
+			if _, err := s.GetProfile(profileName); err == nil {
+				return profileName, nil
+			}
+			// Profile no longer exists, will scan and update cache
+		}
+	}
+
+	// Cache miss or invalid, scan all profiles
 	state, err := s.Load()
 	if err != nil {
 		return "", err
 	}
-	// Scan all profiles' sessions directories
+
 	for profileName := range state.Profiles {
 		sessionsDir := filepath.Join(s.CodexHome(profileName), "sessions")
 		if _, err := os.Stat(sessionsDir); err != nil {
@@ -280,6 +294,8 @@ func (s *Store) FindProfileForSession(sessionID string) (string, error) {
 			continue // Skip on error, try next profile
 		}
 		if found {
+			// Update cache for next time
+			_ = s.AddSessionToCache(sessionID, profileName)
 			return profileName, nil
 		}
 	}
