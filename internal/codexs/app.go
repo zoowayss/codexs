@@ -77,6 +77,8 @@ func (c *CLI) Run(args []string) int {
 		return c.cmdRun(args[1:])
 	case "open":
 		return c.cmdOpen(args[1:])
+	case "resume":
+		return c.cmdResume(args[1:])
 	case "doctor":
 		return c.cmdDoctor(args[1:])
 	default:
@@ -97,6 +99,7 @@ Usage:
   codexs show <profile>
   codexs run <profile> [-- <codex args...>]
   codexs open [--terminal terminal|iterm2] <profile>... [-- <codex args...>]
+  codexs resume <sessionId>
   codexs delete <profile> [--purge]
   codexs doctor
   codexs names
@@ -105,6 +108,7 @@ Examples:
   codexs add work --base-url https://api.openai.com/v1 --api-key-stdin
   codexs run work -- -C /path/to/repo
   codexs open work side-project -- -C /path/to/repo
+  codexs resume 019ea0e2-d130-7022-a3bd-e92e28e22397
 
 `)
 }
@@ -425,6 +429,59 @@ func (c *CLI) cmdOpen(args []string) int {
 			return 1
 		}
 		fmt.Fprintf(c.stdout, "opened %q in %s\n", profile.Name, terminal)
+	}
+	return 0
+}
+
+func (c *CLI) cmdResume(args []string) int {
+	if !c.requireSupportedPlatform() {
+		return 1
+	}
+	fs := flag.NewFlagSet("resume", flag.ContinueOnError)
+	fs.SetOutput(c.stderr)
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if fs.NArg() != 1 {
+		fmt.Fprintln(c.stderr, "error: resume requires exactly one session ID")
+		return 2
+	}
+	sessionID := fs.Arg(0)
+	profileName, err := c.store.FindProfileForSession(sessionID)
+	if err != nil {
+		fmt.Fprintf(c.stderr, "error: %v\n", err)
+		return 1
+	}
+	profile, err := c.store.GetProfile(profileName)
+	if err != nil {
+		fmt.Fprintf(c.stderr, "error: %v\n", err)
+		return 1
+	}
+	if err := c.store.PrepareProfile(profile); err != nil {
+		fmt.Fprintf(c.stderr, "error: %v\n", err)
+		return 1
+	}
+	authPath := filepath.Join(c.store.CodexHome(profile.Name), "auth.json")
+	if _, err := os.Stat(authPath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			fmt.Fprintf(c.stderr, "error: missing %s; run `codexs update %s --api-key-stdin`\n", authPath, profile.Name)
+			return 1
+		}
+		fmt.Fprintf(c.stderr, "error: inspect %s: %v\n", authPath, err)
+		return 1
+	}
+	codexPath, err := resolveCodexBinary()
+	if err != nil {
+		fmt.Fprintf(c.stderr, "error: %v\n", err)
+		return 1
+	}
+	env := withEnv(os.Environ(), "CODEX_HOME", c.store.CodexHome(profile.Name))
+	argv := append([]string{codexPath}, profileConfigArgs(profile)...)
+	argv = append(argv, "resume", sessionID)
+	fmt.Fprintf(c.stdout, "resuming session %s with profile %q\n", sessionID, profile.Name)
+	if err := c.platform.ExecProcess(codexPath, argv, env); err != nil {
+		fmt.Fprintf(c.stderr, "error: start codex: %v\n", err)
+		return 1
 	}
 	return 0
 }

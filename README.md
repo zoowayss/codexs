@@ -152,6 +152,32 @@ Run a local health check:
 ./codexs doctor
 ```
 
+Resume a Codex session by its ID:
+
+```bash
+./codexs resume 019ea0e2-d130-7022-a3bd-e92e28e22397
+```
+
+The `resume` command automatically scans all profiles to find which one contains the session, then resumes it with the correct profile configuration.
+
+## Session Management Workflow
+
+When working with Codex sessions across multiple profiles:
+
+1. **Start a session** with a profile:
+   ```bash
+   ./codexs run work -- -C /path/to/repo
+   ```
+
+2. **Note the session ID** that Codex displays when it starts (or use `codex /sessions` to list active sessions)
+
+3. **Resume the session** later without remembering which profile was used:
+   ```bash
+   ./codexs resume 019ea0e2-d130-7022-a3bd-e92e28e22397
+   ```
+
+`codexs` automatically searches through all profile sessions directories to find the correct profile for the given session ID.
+
 ## How Isolation Works
 
 For every profile, `codexs run` sets:
@@ -189,3 +215,7 @@ shape:
 `codexs open` launches a new terminal window that calls
 `codexs run <profile>`. The API key is not embedded in the terminal
 command.
+
+## Acknowledgments
+
+Thanks to [LINUX DO](https://linux.do) for inspiration and community support.

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -257,4 +258,54 @@ func (s *Store) writeProfileFiles(profile Profile, apiKey string) error {
 		}
 	}
 	return nil
+}
+
+func (s *Store) FindProfileForSession(sessionID string) (string, error) {
+	if sessionID == "" {
+		return "", errors.New("session ID is required")
+	}
+	state, err := s.Load()
+	if err != nil {
+		return "", err
+	}
+	// Scan all profiles' sessions directories
+	for profileName := range state.Profiles {
+		sessionsDir := filepath.Join(s.CodexHome(profileName), "sessions")
+		if _, err := os.Stat(sessionsDir); err != nil {
+			continue // Skip if sessions directory doesn't exist
+		}
+		// Walk through sessions directory to find files containing this sessionID
+		found, err := s.sessionExistsInProfile(sessionsDir, sessionID)
+		if err != nil {
+			continue // Skip on error, try next profile
+		}
+		if found {
+			return profileName, nil
+		}
+	}
+	return "", fmt.Errorf("session %q not found in any profile", sessionID)
+}
+
+func (s *Store) sessionExistsInProfile(sessionsDir, sessionID string) (bool, error) {
+	// Session files are stored as: sessions/YYYY/MM/DD/rollout-YYYY-MM-DDTHH-MM-SS-<sessionID>.jsonl
+	// We need to walk through the directory tree to find files matching the sessionID
+	var found bool
+	err := filepath.Walk(sessionsDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil // Continue walking on error
+		}
+		if info.IsDir() {
+			return nil
+		}
+		// Check if filename contains the sessionID
+		if strings.Contains(info.Name(), sessionID) && strings.HasSuffix(info.Name(), ".jsonl") {
+			found = true
+			return filepath.SkipAll // Stop walking once found
+		}
+		return nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return found, nil
 }

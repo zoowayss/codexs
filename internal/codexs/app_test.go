@@ -177,3 +177,44 @@ func (p testPlatform) OpenTerminal(kind TerminalKind, shellCommand string) error
 func (p testPlatform) ExecProcess(path string, argv []string, env []string) error {
 	return p.unsupported
 }
+
+func TestStoreFindProfileForSession(t *testing.T) {
+	root := t.TempDir()
+	store := NewStoreAt(root)
+	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
+
+	// Add a profile
+	_, err := store.AddProfile("work", "https://api.openai.com/v1", "test-key", now)
+	if err != nil {
+		t.Fatalf("AddProfile returned error: %v", err)
+	}
+
+	// Create a fake session file
+	sessionID := "019ea0e2-d130-7022-a3bd-e92e28e22397"
+	sessionsDir := filepath.Join(store.CodexHome("work"), "sessions", "2026", "06", "07")
+	if err := os.MkdirAll(sessionsDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll returned error: %v", err)
+	}
+	sessionFile := filepath.Join(sessionsDir, "rollout-2026-06-07T12-00-00-"+sessionID+".jsonl")
+	if err := os.WriteFile(sessionFile, []byte("test"), 0o644); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+
+	// Verify session can be found
+	profileName, err := store.FindProfileForSession(sessionID)
+	if err != nil {
+		t.Fatalf("FindProfileForSession returned error: %v", err)
+	}
+	if profileName != "work" {
+		t.Fatalf("FindProfileForSession returned %q, want %q", profileName, "work")
+	}
+
+	// Verify session not found for non-existent session
+	_, err = store.FindProfileForSession("nonexistent-session-id")
+	if err == nil {
+		t.Fatal("FindProfileForSession should return error for non-existent session")
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("FindProfileForSession error = %v, want 'not found'", err)
+	}
+}
