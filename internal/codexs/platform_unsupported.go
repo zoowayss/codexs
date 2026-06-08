@@ -35,14 +35,7 @@ func (unsupportedPlatform) DefaultStoreRoot(appID string) (string, error) {
 	return filepath.Join(home, "."+appID), nil
 }
 
-func (p unsupportedPlatform) ParseTerminalKind(value string) (TerminalKind, error) {
-	if value != "" {
-		return "", fmt.Errorf("terminal %q is not supported on %s yet", value, p.ID())
-	}
-	return "", p.CheckSupported()
-}
-
-func (p unsupportedPlatform) OpenTerminal(kind TerminalKind, shellCommand string) error {
+func (p unsupportedPlatform) OpenTerminal(shellCommand string) error {
 	return p.CheckSupported()
 }
 

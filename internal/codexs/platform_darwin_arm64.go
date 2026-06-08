@@ -34,11 +34,7 @@ func (macOSAppleSiliconPlatform) DefaultStoreRoot(appID string) (string, error) 
 	return filepath.Join(home, "Library", "Application Support", appID), nil
 }
 
-func (macOSAppleSiliconPlatform) ParseTerminalKind(value string) (TerminalKind, error) {
-	return "", fmt.Errorf("terminal kind is no longer supported")
-}
-
-func (macOSAppleSiliconPlatform) OpenTerminal(kind TerminalKind, shellCommand string) error {
+func (macOSAppleSiliconPlatform) OpenTerminal(shellCommand string) error {
 	// Detect current terminal application
 	terminalApp := detectCurrentTerminal()
 

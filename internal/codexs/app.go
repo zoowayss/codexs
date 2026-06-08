@@ -355,30 +355,11 @@ func (c *CLI) cmdRun(args []string) int {
 		fmt.Fprintf(c.stderr, "error: %v\n", err)
 		return 2
 	}
-	profile, err := c.store.GetProfile(profileName)
+	profile, codexPath, env, err := c.prepareCodexExecution(profileName)
 	if err != nil {
 		fmt.Fprintf(c.stderr, "error: %v\n", err)
 		return 1
 	}
-	if err := c.store.PrepareProfile(profile); err != nil {
-		fmt.Fprintf(c.stderr, "error: %v\n", err)
-		return 1
-	}
-	authPath := filepath.Join(c.store.CodexHome(profile.Name), "auth.json")
-	if _, err := os.Stat(authPath); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			fmt.Fprintf(c.stderr, "error: missing %s; run `codexs update %s --api-key-stdin`\n", authPath, profile.Name)
-			return 1
-		}
-		fmt.Fprintf(c.stderr, "error: inspect %s: %v\n", authPath, err)
-		return 1
-	}
-	codexPath, err := resolveCodexBinary()
-	if err != nil {
-		fmt.Fprintf(c.stderr, "error: %v\n", err)
-		return 1
-	}
-	env := withEnv(os.Environ(), "CODEX_HOME", c.store.CodexHome(profile.Name))
 	argv := append([]string{codexPath}, profileConfigArgs(profile)...)
 	argv = append(argv, codexArgs...)
 	if err := c.platform.ExecProcess(codexPath, argv, env); err != nil {
@@ -418,7 +399,7 @@ func (c *CLI) cmdOpen(args []string) int {
 			return 1
 		}
 		command := buildRunShellCommand(executable, profile.Name, codexArgs)
-		if err := c.platform.OpenTerminal("", command); err != nil {
+		if err := c.platform.OpenTerminal(command); err != nil {
 			fmt.Fprintf(c.stderr, "error: open terminal for %q: %v\n", profile.Name, err)
 			return 1
 		}
@@ -446,30 +427,11 @@ func (c *CLI) cmdResume(args []string) int {
 		fmt.Fprintf(c.stderr, "error: %v\n", err)
 		return 1
 	}
-	profile, err := c.store.GetProfile(profileName)
+	profile, codexPath, env, err := c.prepareCodexExecution(profileName)
 	if err != nil {
 		fmt.Fprintf(c.stderr, "error: %v\n", err)
 		return 1
 	}
-	if err := c.store.PrepareProfile(profile); err != nil {
-		fmt.Fprintf(c.stderr, "error: %v\n", err)
-		return 1
-	}
-	authPath := filepath.Join(c.store.CodexHome(profile.Name), "auth.json")
-	if _, err := os.Stat(authPath); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			fmt.Fprintf(c.stderr, "error: missing %s; run `codexs update %s --api-key-stdin`\n", authPath, profile.Name)
-			return 1
-		}
-		fmt.Fprintf(c.stderr, "error: inspect %s: %v\n", authPath, err)
-		return 1
-	}
-	codexPath, err := resolveCodexBinary()
-	if err != nil {
-		fmt.Fprintf(c.stderr, "error: %v\n", err)
-		return 1
-	}
-	env := withEnv(os.Environ(), "CODEX_HOME", c.store.CodexHome(profile.Name))
 	argv := append([]string{codexPath}, profileConfigArgs(profile)...)
 	argv = append(argv, "resume", sessionID)
 	fmt.Fprintf(c.stdout, "resuming session %s with profile %q\n", sessionID, profile.Name)
@@ -478,6 +440,30 @@ func (c *CLI) cmdResume(args []string) int {
 		return 1
 	}
 	return 0
+}
+
+// prepareCodexExecution prepares profile, checks auth, resolves codex binary, and returns env
+func (c *CLI) prepareCodexExecution(profileName string) (Profile, string, []string, error) {
+	profile, err := c.store.GetProfile(profileName)
+	if err != nil {
+		return Profile{}, "", nil, err
+	}
+	if err := c.store.PrepareProfile(profile); err != nil {
+		return Profile{}, "", nil, err
+	}
+	authPath := filepath.Join(c.store.CodexHome(profile.Name), "auth.json")
+	if _, err := os.Stat(authPath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return Profile{}, "", nil, fmt.Errorf("missing %s; run `codexs update %s --api-key-stdin`", authPath, profile.Name)
+		}
+		return Profile{}, "", nil, fmt.Errorf("inspect %s: %w", authPath, err)
+	}
+	codexPath, err := resolveCodexBinary()
+	if err != nil {
+		return Profile{}, "", nil, err
+	}
+	env := withEnv(os.Environ(), "CODEX_HOME", c.store.CodexHome(profile.Name))
+	return profile, codexPath, env, nil
 }
 
 func (c *CLI) cmdDoctor(args []string) int {
@@ -556,23 +542,28 @@ func (c *CLI) resolveSecret(flags secretFlags) (string, error) {
 	if selected != 1 {
 		return "", errors.New("choose exactly one api key option")
 	}
+
 	var value string
+	var err error
 	switch {
 	case *flags.apiKey != "":
 		value = *flags.apiKey
 	case *flags.apiKeyFile != "":
-		data, err := os.ReadFile(*flags.apiKeyFile)
+		var data []byte
+		data, err = os.ReadFile(*flags.apiKeyFile)
 		if err != nil {
 			return "", fmt.Errorf("read api key file: %w", err)
 		}
 		value = string(data)
 	case *flags.apiKeyStdin:
-		data, err := io.ReadAll(c.stdin)
+		var data []byte
+		data, err = io.ReadAll(c.stdin)
 		if err != nil {
 			return "", fmt.Errorf("read api key from stdin: %w", err)
 		}
 		value = string(data)
 	}
+
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return "", errors.New("api key is required")

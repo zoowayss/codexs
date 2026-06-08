@@ -4,27 +4,30 @@ import (
 	"strings"
 )
 
-type TerminalKind string
-
-const (
-	TerminalApple TerminalKind = "terminal"
-	TerminalITerm TerminalKind = "iterm2"
-)
-
 func buildRunShellCommand(executable, profileName string, codexArgs []string) string {
-	parts := []string{shellQuote(executable), "run", shellQuote(profileName)}
+	var b strings.Builder
+	b.Grow(len(executable) + len(profileName) + 20) // Preallocate
+	b.WriteString(shellQuote(executable))
+	b.WriteString(" run ")
+	b.WriteString(shellQuote(profileName))
 	if len(codexArgs) > 0 {
-		parts = append(parts, "--")
+		b.WriteString(" --")
 		for _, arg := range codexArgs {
-			parts = append(parts, shellQuote(arg))
+			b.WriteByte(' ')
+			b.WriteString(shellQuote(arg))
 		}
 	}
-	return strings.Join(parts, " ")
+	return b.String()
 }
 
 func shellQuote(value string) string {
 	if value == "" {
 		return "''"
 	}
-	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+	var b strings.Builder
+	b.Grow(len(value) + 10) // Preallocate with buffer for quotes and escapes
+	b.WriteByte('\'')
+	b.WriteString(strings.ReplaceAll(value, "'", "'\\''"))
+	b.WriteByte('\'')
+	return b.String()
 }

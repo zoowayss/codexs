@@ -6,17 +6,23 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 )
 
+type SessionCacheEntry struct {
+	ProfileName string    `json:"profile_name"`
+	LastAccess  time.Time `json:"last_access"`
+}
+
 type SessionCache struct {
-	Version  int               `json:"version"`
-	Sessions map[string]string `json:"sessions"` // sessionID -> profileName
+	Version  int                          `json:"version"`
+	Sessions map[string]SessionCacheEntry `json:"sessions"` // sessionID -> entry
 }
 
 func newSessionCache() SessionCache {
 	return SessionCache{
 		Version:  1,
-		Sessions: make(map[string]string),
+		Sessions: make(map[string]SessionCacheEntry),
 	}
 }
 
@@ -38,8 +44,12 @@ func (s *Store) LoadSessionCache() (SessionCache, error) {
 		return SessionCache{}, fmt.Errorf("parse %s: %w", path, err)
 	}
 	if cache.Sessions == nil {
-		cache.Sessions = make(map[string]string)
+		cache.Sessions = make(map[string]SessionCacheEntry)
 	}
+
+	// Clean up expired entries (older than 30 days)
+	s.cleanExpiredCache(&cache)
+
 	return cache, nil
 }
 
@@ -48,7 +58,7 @@ func (s *Store) SaveSessionCache(cache SessionCache) error {
 		return fmt.Errorf("create %s: %w", s.root, err)
 	}
 	if cache.Sessions == nil {
-		cache.Sessions = make(map[string]string)
+		cache.Sessions = make(map[string]SessionCacheEntry)
 	}
 	data, err := json.MarshalIndent(cache, "", "  ")
 	if err != nil {
@@ -67,6 +77,21 @@ func (s *Store) AddSessionToCache(sessionID, profileName string) error {
 	if err != nil {
 		return err
 	}
-	cache.Sessions[sessionID] = profileName
+	cache.Sessions[sessionID] = SessionCacheEntry{
+		ProfileName: profileName,
+		LastAccess:  time.Now(),
+	}
 	return s.SaveSessionCache(cache)
+}
+
+// cleanExpiredCache removes cache entries older than 30 days
+func (s *Store) cleanExpiredCache(cache *SessionCache) {
+	const maxAge = 30 * 24 * time.Hour
+	cutoff := time.Now().Add(-maxAge)
+
+	for sessionID, entry := range cache.Sessions {
+		if entry.LastAccess.Before(cutoff) {
+			delete(cache.Sessions, sessionID)
+		}
+	}
 }

@@ -164,14 +164,14 @@ func (p testPlatform) DefaultStoreRoot(appID string) (string, error) {
 	return p.root, nil
 }
 
-func (p testPlatform) ParseTerminalKind(value string) (TerminalKind, error) {
+func (p testPlatform) ParseTerminalKind(value string) (string, error) {
 	if p.unsupported != nil {
 		return "", p.unsupported
 	}
-	return TerminalApple, nil
+	return "terminal", nil
 }
 
-func (p testPlatform) OpenTerminal(kind TerminalKind, shellCommand string) error {
+func (p testPlatform) OpenTerminal(shellCommand string) error {
 	return p.unsupported
 }
 
@@ -256,8 +256,8 @@ func TestStoreFindProfileForSessionWithCache(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadSessionCache returned error: %v", err)
 	}
-	if cachedProfile, ok := cache.Sessions[sessionID]; !ok || cachedProfile != "work" {
-		t.Fatalf("cache.Sessions[%q] = %q, want %q", sessionID, cachedProfile, "work")
+	if cachedProfile, ok := cache.Sessions[sessionID]; !ok || cachedProfile.ProfileName != "work" {
+		t.Fatalf("cache.Sessions[%q] = %+v, want ProfileName=%q", sessionID, cachedProfile, "work")
 	}
 
 	// Second call - should use cache (we can verify by deleting the session file)

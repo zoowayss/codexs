@@ -1,8 +1,6 @@
 package codexs
 
 import (
-	"errors"
-	"fmt"
 	"net/url"
 	"regexp"
 	"strings"
@@ -38,10 +36,13 @@ func newState() State {
 
 func validateProfileName(name string) error {
 	if name == "" {
-		return errors.New("profile name is required")
+		return ErrInvalidProfileName{Name: name, Reason: "profile name is required"}
 	}
 	if !profileNamePattern.MatchString(name) {
-		return errors.New("profile name must start with a letter or digit and contain only letters, digits, dot, underscore, or hyphen")
+		return ErrInvalidProfileName{
+			Name:   name,
+			Reason: "must start with a letter or digit and contain only letters, digits, dot, underscore, or hyphen",
+		}
 	}
 	return nil
 }
@@ -49,17 +50,17 @@ func validateProfileName(name string) error {
 func normalizeBaseURL(raw string) (string, error) {
 	value := strings.TrimSpace(raw)
 	if value == "" {
-		return "", errors.New("base URL is required")
+		return "", ErrInvalidBaseURL{URL: value, Reason: "base URL is required"}
 	}
 	parsed, err := url.Parse(value)
 	if err != nil {
-		return "", fmt.Errorf("invalid base URL: %w", err)
+		return "", ErrInvalidBaseURL{URL: value, Reason: err.Error()}
 	}
 	if parsed.Scheme != "https" && parsed.Scheme != "http" {
-		return "", errors.New("base URL must use http or https")
+		return "", ErrInvalidBaseURL{URL: value, Reason: "must use http or https"}
 	}
 	if parsed.Host == "" {
-		return "", errors.New("base URL must include a host")
+		return "", ErrInvalidBaseURL{URL: value, Reason: "must include a host"}
 	}
 	return value, nil
 }

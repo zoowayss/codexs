@@ -9,8 +9,6 @@ import (
 	"sort"
 	"strings"
 	"time"
-
-	"github.com/pelletier/go-toml/v2"
 )
 
 type Store struct {
@@ -126,7 +124,7 @@ func (s *Store) AddProfile(name, baseURL, apiKey string, now time.Time) (Profile
 		return Profile{}, err
 	}
 	if _, exists := state.Profiles[name]; exists {
-		return Profile{}, fmt.Errorf("profile %q already exists; use update to change it", name)
+		return Profile{}, ErrProfileExists{Name: name}
 	}
 	profile := Profile{
 		Name:      name,
@@ -154,33 +152,16 @@ func (s *Store) UpdateProfile(name string, baseURL string, apiKey *string, now t
 	}
 	profile, exists := state.Profiles[name]
 	if !exists {
-		return Profile{}, fmt.Errorf("profile %q does not exist", name)
+		return Profile{}, ErrProfileNotFound{Name: name}
 	}
 
-	// Update base_url in profile state
+	// Update base URL if provided
 	if baseURL != "" {
 		normalizedBaseURL, err := normalizeBaseURL(baseURL)
 		if err != nil {
 			return Profile{}, err
 		}
 		profile.BaseURL = normalizedBaseURL
-
-		// Try to update config.toml in-place, fallback to full regeneration
-		configPath := filepath.Join(s.CodexHome(profile.Name), "config.toml")
-		if _, err := os.Stat(configPath); err == nil {
-			// Config exists, try to update only the base_url value
-			if err := s.updateConfigValue(configPath, "model_providers.profile.base_url", normalizedBaseURL); err != nil {
-				// Fallback: regenerate the entire config
-				if err := os.WriteFile(configPath, []byte(renderCodexConfig(normalizedBaseURL)), 0o600); err != nil {
-					return Profile{}, fmt.Errorf("write %s: %w", configPath, err)
-				}
-			}
-		} else {
-			// Config doesn't exist, create it
-			if err := s.writeProfileFiles(profile, "", true); err != nil {
-				return Profile{}, err
-			}
-		}
 	}
 
 	// Update API key if provided
@@ -191,10 +172,10 @@ func (s *Store) UpdateProfile(name string, baseURL string, apiKey *string, now t
 		}
 		key = *apiKey
 	}
-	if key != "" {
-		if err := s.writeProfileFiles(profile, key, false); err != nil {
-			return Profile{}, err
-		}
+
+	// Write profile files (config and/or auth)
+	if err := s.writeProfileFiles(profile, key, baseURL != ""); err != nil {
+		return Profile{}, err
 	}
 
 	profile.UpdatedAt = now
@@ -214,7 +195,7 @@ func (s *Store) DeleteProfile(name string, purge bool) error {
 		return err
 	}
 	if _, exists := state.Profiles[name]; !exists {
-		return fmt.Errorf("profile %q does not exist", name)
+		return ErrProfileNotFound{Name: name}
 	}
 	delete(state.Profiles, name)
 	if err := s.Save(state); err != nil {
@@ -238,7 +219,7 @@ func (s *Store) GetProfile(name string) (Profile, error) {
 	}
 	profile, exists := state.Profiles[name]
 	if !exists {
-		return Profile{}, fmt.Errorf("profile %q does not exist", name)
+		return Profile{}, ErrProfileNotFound{Name: name}
 	}
 	return profile, nil
 }
@@ -262,54 +243,15 @@ func (s *Store) PrepareProfile(profile Profile) error {
 	return s.writeProfileFiles(profile, "", false)
 }
 
-// updateConfigValue updates a specific value in config.toml without overwriting the entire file
-// keyPath examples: "model_providers.profile.base_url", "some_key"
-func (s *Store) updateConfigValue(configPath string, keyPath string, value interface{}) error {
-	// Read existing config
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		return fmt.Errorf("read config: %w", err)
-	}
-
-	// Parse TOML
-	var config map[string]interface{}
-	if err := toml.Unmarshal(data, &config); err != nil {
-		return fmt.Errorf("parse config: %w", err)
-	}
-
-	// Navigate to the nested key and update it
-	keys := strings.Split(keyPath, ".")
-	current := config
-	for i := 0; i < len(keys)-1; i++ {
-		if next, ok := current[keys[i]].(map[string]interface{}); ok {
-			current = next
-		} else {
-			return fmt.Errorf("key path %q not found at %q", keyPath, keys[i])
-		}
-	}
-	current[keys[len(keys)-1]] = value
-
-	// Write back
-	updatedData, err := toml.Marshal(config)
-	if err != nil {
-		return fmt.Errorf("marshal config: %w", err)
-	}
-
-	if err := os.WriteFile(configPath, updatedData, 0o600); err != nil {
-		return fmt.Errorf("write config: %w", err)
-	}
-
-	return nil
-}
-
-func (s *Store) writeProfileFiles(profile Profile, apiKey string, forceConfig bool) error {
+func (s *Store) writeProfileFiles(profile Profile, apiKey string, updateConfig bool) error {
 	codexHome := s.CodexHome(profile.Name)
 	if err := os.MkdirAll(codexHome, 0o700); err != nil {
 		return fmt.Errorf("create %s: %w", codexHome, err)
 	}
+
+	// Write config.toml if updateConfig is true or if it doesn't exist
 	configPath := filepath.Join(codexHome, "config.toml")
-	// Only create/overwrite config.toml if it doesn't exist or forceConfig is true
-	if forceConfig {
+	if updateConfig {
 		if err := os.WriteFile(configPath, []byte(renderCodexConfig(profile.BaseURL)), 0o600); err != nil {
 			return fmt.Errorf("write %s: %w", configPath, err)
 		}
@@ -318,6 +260,8 @@ func (s *Store) writeProfileFiles(profile Profile, apiKey string, forceConfig bo
 			return fmt.Errorf("write %s: %w", configPath, err)
 		}
 	}
+
+	// Write auth.json if apiKey is provided
 	if apiKey != "" {
 		auth := map[string]string{"OPENAI_API_KEY": apiKey}
 		data, err := json.MarshalIndent(auth, "", "  ")
@@ -341,10 +285,12 @@ func (s *Store) FindProfileForSession(sessionID string) (string, error) {
 	// Try cache first
 	cache, err := s.LoadSessionCache()
 	if err == nil {
-		if profileName, ok := cache.Sessions[sessionID]; ok {
+		if entry, ok := cache.Sessions[sessionID]; ok {
 			// Verify the profile still exists
-			if _, err := s.GetProfile(profileName); err == nil {
-				return profileName, nil
+			if _, err := s.GetProfile(entry.ProfileName); err == nil {
+				// Update last access time
+				_ = s.AddSessionToCache(sessionID, entry.ProfileName)
+				return entry.ProfileName, nil
 			}
 			// Profile no longer exists, will scan and update cache
 		}
@@ -372,22 +318,22 @@ func (s *Store) FindProfileForSession(sessionID string) (string, error) {
 			return profileName, nil
 		}
 	}
-	return "", fmt.Errorf("session %q not found in any profile", sessionID)
+	return "", ErrSessionNotFound{SessionID: sessionID}
 }
 
 func (s *Store) sessionExistsInProfile(sessionsDir, sessionID string) (bool, error) {
 	// Session files are stored as: sessions/YYYY/MM/DD/rollout-YYYY-MM-DDTHH-MM-SS-<sessionID>.jsonl
-	// We need to walk through the directory tree to find files matching the sessionID
+	// Use WalkDir instead of Walk for better performance (2-3x faster)
 	var found bool
-	err := filepath.Walk(sessionsDir, func(path string, info os.FileInfo, err error) error {
+	err := filepath.WalkDir(sessionsDir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil // Continue walking on error
 		}
-		if info.IsDir() {
+		if d.IsDir() {
 			return nil
 		}
 		// Check if filename contains the sessionID
-		if strings.Contains(info.Name(), sessionID) && strings.HasSuffix(info.Name(), ".jsonl") {
+		if strings.Contains(d.Name(), sessionID) && strings.HasSuffix(d.Name(), ".jsonl") {
 			found = true
 			return filepath.SkipAll // Stop walking once found
 		}
