@@ -35,30 +35,65 @@ func (macOSAppleSiliconPlatform) DefaultStoreRoot(appID string) (string, error) 
 }
 
 func (macOSAppleSiliconPlatform) ParseTerminalKind(value string) (TerminalKind, error) {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "", string(TerminalApple):
-		return TerminalApple, nil
-	case string(TerminalITerm), "iterm":
-		return TerminalITerm, nil
-	default:
-		return "", fmt.Errorf("unsupported terminal %q; use terminal or iterm2", value)
-	}
+	return "", fmt.Errorf("terminal kind is no longer supported")
 }
 
 func (macOSAppleSiliconPlatform) OpenTerminal(kind TerminalKind, shellCommand string) error {
+	// Detect current terminal application
+	terminalApp := detectCurrentTerminal()
+
 	var script string
-	switch kind {
-	case TerminalApple:
+	switch terminalApp {
+	case "iTerm":
+		script = "tell application \"iTerm\"\nactivate\ncreate window with default profile\ntell current session of current window to write text " + appleScriptString(shellCommand) + "\nend tell\nend tell"
+	case "Terminal":
 		script = "tell application \"Terminal\"\nactivate\ndo script " + appleScriptString(shellCommand) + "\nend tell"
-	case TerminalITerm:
-		script = "tell application \"iTerm2\"\nactivate\ncreate window with default profile\ntell current session of current window to write text " + appleScriptString(shellCommand) + "\nend tell"
 	default:
-		return fmt.Errorf("unsupported terminal %q", kind)
+		// Unsupported terminal detected
+		return fmt.Errorf("terminal %q does not support AppleScript automation\nhint: please use Terminal.app or iTerm2, or use `codexs run` instead of `codexs open`", terminalApp)
 	}
+
 	cmd := exec.Command("osascript", "-e", script)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+func detectCurrentTerminal() string {
+	// Check TERM_PROGRAM environment variable
+	termProgram := os.Getenv("TERM_PROGRAM")
+
+	// Supported terminals with AppleScript integration
+	if strings.Contains(termProgram, "iTerm") {
+		return "iTerm"
+	}
+	if strings.Contains(termProgram, "Apple_Terminal") {
+		return "Terminal"
+	}
+
+	// Check for known unsupported terminals
+	if termProgram != "" {
+		// Return the actual terminal name (e.g., "ghostty", "Alacritty", etc.)
+		return termProgram
+	}
+
+	// Fallback: check parent process
+	cmd := exec.Command("ps", "-p", fmt.Sprintf("%d", os.Getppid()), "-o", "comm=")
+	output, err := cmd.Output()
+	if err == nil {
+		procName := strings.TrimSpace(string(output))
+		if strings.Contains(procName, "iTerm") {
+			return "iTerm"
+		}
+		if strings.Contains(procName, "Terminal") {
+			return "Terminal"
+		}
+		// Return the actual process name
+		return filepath.Base(procName)
+	}
+
+	// Unknown terminal
+	return "unknown"
 }
 
 func (macOSAppleSiliconPlatform) ExecProcess(path string, argv []string, env []string) error {

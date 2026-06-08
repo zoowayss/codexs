@@ -98,7 +98,7 @@ Usage:
   codexs list
   codexs show <profile>
   codexs run <profile> [-- <codex args...>]
-  codexs open [--terminal terminal|iterm2] <profile>... [-- <codex args...>]
+  codexs open <profile>... [-- <codex args...>]
   codexs resume <sessionId>
   codexs delete <profile> [--purge]
   codexs doctor
@@ -394,13 +394,7 @@ func (c *CLI) cmdOpen(args []string) int {
 	}
 	fs := flag.NewFlagSet("open", flag.ContinueOnError)
 	fs.SetOutput(c.stderr)
-	terminalValue := fs.String("terminal", string(TerminalApple), "terminal app: terminal or iterm2")
 	if err := fs.Parse(args); err != nil {
-		return 2
-	}
-	terminal, err := c.platform.ParseTerminalKind(*terminalValue)
-	if err != nil {
-		fmt.Fprintf(c.stderr, "error: %v\n", err)
 		return 2
 	}
 	profileNames, codexArgs, err := parseProfilesAndCodexArgs(fs.Args())
@@ -424,11 +418,11 @@ func (c *CLI) cmdOpen(args []string) int {
 			return 1
 		}
 		command := buildRunShellCommand(executable, profile.Name, codexArgs)
-		if err := c.platform.OpenTerminal(terminal, command); err != nil {
-			fmt.Fprintf(c.stderr, "error: open %s for %q: %v\n", terminal, profile.Name, err)
+		if err := c.platform.OpenTerminal("", command); err != nil {
+			fmt.Fprintf(c.stderr, "error: open terminal for %q: %v\n", profile.Name, err)
 			return 1
 		}
-		fmt.Fprintf(c.stdout, "opened %q in %s\n", profile.Name, terminal)
+		fmt.Fprintf(c.stdout, "opened %q in new terminal window\n", profile.Name)
 	}
 	return 0
 }
