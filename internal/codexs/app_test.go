@@ -164,13 +164,6 @@ func (p testPlatform) DefaultStoreRoot(appID string) (string, error) {
 	return p.root, nil
 }
 
-func (p testPlatform) ParseTerminalKind(value string) (string, error) {
-	if p.unsupported != nil {
-		return "", p.unsupported
-	}
-	return "terminal", nil
-}
-
 func (p testPlatform) OpenTerminal(shellCommand string) error {
 	return p.unsupported
 }
@@ -327,5 +320,107 @@ func BenchmarkStoreFindProfileForSession(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, _ = store.FindProfileForSession(sessionID)
+	}
+}
+
+func TestStoreAddProfileFromTemplate(t *testing.T) {
+	root := t.TempDir()
+	store := NewStoreAt(root)
+	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
+
+	// Create source profile
+	_, err := store.AddProfile("work", "https://api.example.com/v1", "source-key", now)
+	if err != nil {
+		t.Fatalf("AddProfile returned error: %v", err)
+	}
+
+	// Add AGENTS.md to source profile
+	agentsPath := filepath.Join(store.CodexHome("work"), "AGENTS.md")
+	if err := os.WriteFile(agentsPath, []byte("# Test AGENTS.md\nTest content"), 0o644); err != nil {
+		t.Fatalf("WriteFile AGENTS.md: %v", err)
+	}
+
+	// Add skills directory to source profile
+	skillsPath := filepath.Join(store.CodexHome("work"), "skills", "test-skill")
+	if err := os.MkdirAll(skillsPath, 0o755); err != nil {
+		t.Fatalf("MkdirAll skills: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(skillsPath, "skill.md"), []byte("test skill"), 0o644); err != nil {
+		t.Fatalf("WriteFile skill.md: %v", err)
+	}
+
+	// Create new profile from template
+	profile, err := store.AddProfileFromTemplate("prework", "https://newapi.example.com/v1", "new-key", "work", now)
+	if err != nil {
+		t.Fatalf("AddProfileFromTemplate returned error: %v", err)
+	}
+	if profile.Name != "prework" {
+		t.Fatalf("profile name = %q", profile.Name)
+	}
+	if profile.BaseURL != "https://newapi.example.com/v1" {
+		t.Fatalf("profile base_url = %q", profile.BaseURL)
+	}
+
+	// Verify AGENTS.md was copied
+	newAgentsPath := filepath.Join(store.CodexHome("prework"), "AGENTS.md")
+	agentsData, err := os.ReadFile(newAgentsPath)
+	if err != nil {
+		t.Fatalf("read AGENTS.md: %v", err)
+	}
+	if !strings.Contains(string(agentsData), "Test AGENTS.md") {
+		t.Fatalf("AGENTS.md content = %q", string(agentsData))
+	}
+
+	// Verify skills directory was copied
+	newSkillPath := filepath.Join(store.CodexHome("prework"), "skills", "test-skill", "skill.md")
+	skillData, err := os.ReadFile(newSkillPath)
+	if err != nil {
+		t.Fatalf("read skill.md: %v", err)
+	}
+	if string(skillData) != "test skill" {
+		t.Fatalf("skill.md content = %q", string(skillData))
+	}
+
+	// Verify config.toml has updated base_url
+	configPath := filepath.Join(store.CodexHome("prework"), "config.toml")
+	configData, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config.toml: %v", err)
+	}
+	configText := string(configData)
+	if !strings.Contains(configText, `base_url  = "https://newapi.example.com/v1"`) &&
+		!strings.Contains(configText, `base_url = "https://newapi.example.com/v1"`) {
+		t.Fatalf("config.toml missing updated base_url:\n%s", configText)
+	}
+	if strings.Contains(configText, "https://api.example.com/v1") {
+		t.Fatalf("config.toml still contains old base_url:\n%s", configText)
+	}
+
+	// Verify auth.json has new API key
+	authPath := filepath.Join(store.CodexHome("prework"), "auth.json")
+	authData, err := os.ReadFile(authPath)
+	if err != nil {
+		t.Fatalf("read auth.json: %v", err)
+	}
+	var auth map[string]string
+	if err := json.Unmarshal(authData, &auth); err != nil {
+		t.Fatalf("parse auth.json: %v", err)
+	}
+	if auth["OPENAI_API_KEY"] != "new-key" {
+		t.Fatalf("OPENAI_API_KEY = %q", auth["OPENAI_API_KEY"])
+	}
+}
+
+func TestStoreAddProfileFromTemplateNonexistentSource(t *testing.T) {
+	root := t.TempDir()
+	store := NewStoreAt(root)
+	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
+
+	_, err := store.AddProfileFromTemplate("new", "https://api.com/v1", "key", "nonexistent", now)
+	if err == nil {
+		t.Fatal("AddProfileFromTemplate should return error for nonexistent source")
+	}
+	if !strings.Contains(err.Error(), "does not exist") {
+		t.Fatalf("error = %v, want 'does not exist'", err)
 	}
 }

@@ -46,10 +46,6 @@ func (s *Store) LoadSessionCache() (SessionCache, error) {
 	if cache.Sessions == nil {
 		cache.Sessions = make(map[string]SessionCacheEntry)
 	}
-
-	// Clean up expired entries (older than 30 days)
-	s.cleanExpiredCache(&cache)
-
 	return cache, nil
 }
 
@@ -60,6 +56,7 @@ func (s *Store) SaveSessionCache(cache SessionCache) error {
 	if cache.Sessions == nil {
 		cache.Sessions = make(map[string]SessionCacheEntry)
 	}
+	pruneExpiredSessions(cache)
 	data, err := json.MarshalIndent(cache, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode session cache: %w", err)
@@ -72,23 +69,12 @@ func (s *Store) SaveSessionCache(cache SessionCache) error {
 	return nil
 }
 
-func (s *Store) AddSessionToCache(sessionID, profileName string) error {
-	cache, err := s.LoadSessionCache()
-	if err != nil {
-		return err
-	}
-	cache.Sessions[sessionID] = SessionCacheEntry{
-		ProfileName: profileName,
-		LastAccess:  time.Now(),
-	}
-	return s.SaveSessionCache(cache)
-}
-
-// cleanExpiredCache removes cache entries older than 30 days
-func (s *Store) cleanExpiredCache(cache *SessionCache) {
+// pruneExpiredSessions drops entries not accessed within the retention window.
+// Pruning happens at save time so reads stay side-effect free and every write
+// keeps the cache bounded.
+func pruneExpiredSessions(cache SessionCache) {
 	const maxAge = 30 * 24 * time.Hour
 	cutoff := time.Now().Add(-maxAge)
-
 	for sessionID, entry := range cache.Sessions {
 		if entry.LastAccess.Before(cutoff) {
 			delete(cache.Sessions, sessionID)

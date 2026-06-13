@@ -93,7 +93,7 @@ func (c *CLI) printHelp() {
 
 Usage:
   codexs init
-  codexs add <profile> --base-url <url> (--api-key <key> | --api-key-file <path> | --api-key-stdin)
+  codexs add <profile> [--profile <source>] [--base-url <url>] [--api-key <key> | --api-key-file <path> | --api-key-stdin]
   codexs update <profile> [--base-url <url>] [--api-key <key> | --api-key-file <path> | --api-key-stdin]
   codexs list
   codexs show <profile>
@@ -106,6 +106,8 @@ Usage:
 
 Examples:
   codexs add work --base-url https://api.openai.com/v1 --api-key-stdin
+  codexs add prework --profile work --base-url https://new.api.com/v1 --api-key-stdin
+  codexs add prework2 --profile work
   codexs run work -- -C /path/to/repo
   codexs open work side-project -- -C /path/to/repo
   codexs resume 019ea0e2-d130-7022-a3bd-e92e28e22397
@@ -154,10 +156,12 @@ func (c *CLI) cmdAdd(args []string) int {
 	}
 	fs := flag.NewFlagSet("add", flag.ContinueOnError)
 	fs.SetOutput(c.stderr)
-	baseURL := fs.String("base-url", defaultBaseURL, "Codex API base URL")
+	baseURL := fs.String("base-url", "", "Codex API base URL")
+	sourceProfile := fs.String("profile", "", "Source profile to copy from")
 	secretFlags := addSecretFlags(fs)
 	profileName, flagArgs, err := extractSingleProfileArg(args, map[string]bool{
 		"base-url":     true,
+		"profile":      true,
 		"api-key":      true,
 		"api-key-file": true,
 	})
@@ -172,12 +176,39 @@ func (c *CLI) cmdAdd(args []string) int {
 		fmt.Fprintln(c.stderr, "error: add received unexpected positional arguments")
 		return 2
 	}
-	apiKey, err := c.resolveSecret(secretFlags)
-	if err != nil {
-		fmt.Fprintf(c.stderr, "error: %v\n", err)
-		return 2
+
+	var profile Profile
+	if *sourceProfile != "" {
+		srcProfile, err := c.store.GetProfile(*sourceProfile)
+		if err != nil {
+			fmt.Fprintf(c.stderr, "error: %v\n", err)
+			return 1
+		}
+		url := *baseURL
+		if url == "" {
+			url = srcProfile.BaseURL
+		}
+		var apiKey string
+		if secretFlags.selected() {
+			apiKey, err = c.resolveSecret(secretFlags)
+			if err != nil {
+				fmt.Fprintf(c.stderr, "error: %v\n", err)
+				return 2
+			}
+		}
+		profile, err = c.store.AddProfileFromTemplate(profileName, url, apiKey, *sourceProfile, c.now())
+	} else {
+		if *baseURL == "" {
+			*baseURL = defaultBaseURL
+		}
+		var apiKey string
+		apiKey, err = c.resolveSecret(secretFlags)
+		if err != nil {
+			fmt.Fprintf(c.stderr, "error: %v\n", err)
+			return 2
+		}
+		profile, err = c.store.AddProfile(profileName, *baseURL, apiKey, c.now())
 	}
-	profile, err := c.store.AddProfile(profileName, *baseURL, apiKey, c.now())
 	if err != nil {
 		fmt.Fprintf(c.stderr, "error: %v\n", err)
 		return 1
@@ -360,13 +391,7 @@ func (c *CLI) cmdRun(args []string) int {
 		fmt.Fprintf(c.stderr, "error: %v\n", err)
 		return 1
 	}
-	argv := append([]string{codexPath}, profileConfigArgs(profile)...)
-	argv = append(argv, codexArgs...)
-	if err := c.platform.ExecProcess(codexPath, argv, env); err != nil {
-		fmt.Fprintf(c.stderr, "error: start codex: %v\n", err)
-		return 1
-	}
-	return 0
+	return c.execCodex(profile, codexPath, env, codexArgs)
 }
 
 func (c *CLI) cmdOpen(args []string) int {
@@ -432,9 +457,15 @@ func (c *CLI) cmdResume(args []string) int {
 		fmt.Fprintf(c.stderr, "error: %v\n", err)
 		return 1
 	}
-	argv := append([]string{codexPath}, profileConfigArgs(profile)...)
-	argv = append(argv, "resume", sessionID)
 	fmt.Fprintf(c.stdout, "resuming session %s with profile %q\n", sessionID, profile.Name)
+	return c.execCodex(profile, codexPath, env, []string{"resume", sessionID})
+}
+
+// execCodex replaces the current process with codex, configured for the given
+// profile and invoked with the supplied extra arguments.
+func (c *CLI) execCodex(profile Profile, codexPath string, env, extraArgs []string) int {
+	argv := append([]string{codexPath}, profileConfigArgs(profile)...)
+	argv = append(argv, extraArgs...)
 	if err := c.platform.ExecProcess(codexPath, argv, env); err != nil {
 		fmt.Fprintf(c.stderr, "error: start codex: %v\n", err)
 		return 1
@@ -666,12 +697,5 @@ func withEnv(env []string, key, value string) []string {
 }
 
 func profileConfigArgs(profile Profile) []string {
-	return []string{
-		"-c", `cli_auth_credentials_store="file"`,
-		"-c", `model_provider="profile"`,
-		"-c", `model_providers.profile.name="profile"`,
-		"-c", `model_providers.profile.wire_api="responses"`,
-		"-c", "model_providers.profile.base_url=" + tomlString(profile.BaseURL),
-		"-c", "model_providers.profile.requires_openai_auth=true",
-	}
+	return codexConfigArgs(profile.BaseURL)
 }
