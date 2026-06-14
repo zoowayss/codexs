@@ -90,7 +90,7 @@ func (s *Store) Save(state State) error {
 	}
 	data = append(data, '\n')
 	path := s.StatePath()
-	if err := os.WriteFile(path, data, 0o600); err != nil {
+	if err := writeFileAtomic(path, data, 0o600); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
 	return nil
@@ -188,7 +188,7 @@ func (s *Store) AddProfileFromTemplate(name, baseURL, apiKey, sourceProfileName 
 		sourceAuthPath := filepath.Join(sourceHome, "auth.json")
 		if data, err := os.ReadFile(sourceAuthPath); err == nil {
 			targetAuthPath := filepath.Join(targetHome, "auth.json")
-			if err := os.WriteFile(targetAuthPath, data, 0o600); err != nil {
+			if err := writeFileAtomic(targetAuthPath, data, 0o600); err != nil {
 				return Profile{}, fmt.Errorf("write %s: %w", targetAuthPath, err)
 			}
 		}
@@ -327,7 +327,7 @@ func (s *Store) writeProfileFiles(profile Profile, apiKey string, updateConfig b
 // writeConfigFile renders and writes config.toml into a codex home directory.
 func writeConfigFile(codexHome, baseURL string) error {
 	configPath := filepath.Join(codexHome, "config.toml")
-	if err := os.WriteFile(configPath, []byte(renderCodexConfig(baseURL)), 0o600); err != nil {
+	if err := writeFileAtomic(configPath, []byte(renderCodexConfig(baseURL)), 0o600); err != nil {
 		return fmt.Errorf("write %s: %w", configPath, err)
 	}
 	return nil
@@ -342,15 +342,47 @@ func writeAuthFile(codexHome, apiKey string) error {
 	}
 	data = append(data, '\n')
 	authPath := filepath.Join(codexHome, "auth.json")
-	if err := os.WriteFile(authPath, data, 0o600); err != nil {
+	if err := writeFileAtomic(authPath, data, 0o600); err != nil {
 		return fmt.Errorf("write %s: %w", authPath, err)
 	}
 	return nil
 }
 
+// writeFileAtomic writes data to path by first writing a temp file in the same
+// directory and renaming it into place. The rename is atomic on the same
+// filesystem, so a crash or a concurrent reader never observes a partially
+// written or truncated file. The temp file is created with the final perm, so
+// secrets are never momentarily world-readable.
+func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	// Best-effort cleanup; a no-op once the rename below succeeds.
+	defer os.Remove(tmpName)
+	if err := tmp.Chmod(perm); err != nil {
+		tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
+}
+
 func (s *Store) FindProfileForSession(sessionID string) (string, error) {
-	if sessionID == "" {
-		return "", errors.New("session ID is required")
+	if err := validateSessionID(sessionID); err != nil {
+		return "", err
 	}
 
 	// Load the cache once; reuse it for both the lookup and any update below.
@@ -363,9 +395,13 @@ func (s *Store) FindProfileForSession(sessionID string) (string, error) {
 	if entry, ok := cache.Sessions[sessionID]; ok {
 		// Verify the profile still exists before trusting the cached mapping.
 		if _, err := s.GetProfile(entry.ProfileName); err == nil {
-			entry.LastAccess = time.Now()
-			cache.Sessions[sessionID] = entry
-			_ = s.SaveSessionCache(cache)
+			// Refresh LastAccess only occasionally so a hot session does not
+			// trigger a disk write on every resume.
+			if now := time.Now(); now.Sub(entry.LastAccess) > sessionAccessRefresh {
+				entry.LastAccess = now
+				cache.Sessions[sessionID] = entry
+				_ = s.SaveSessionCache(cache)
+			}
 			return entry.ProfileName, nil
 		}
 		// Profile no longer exists; drop the stale entry and rescan.
@@ -402,8 +438,11 @@ func (s *Store) FindProfileForSession(sessionID string) (string, error) {
 }
 
 func (s *Store) sessionExistsInProfile(sessionsDir, sessionID string) (bool, error) {
-	// Session files are stored as: sessions/YYYY/MM/DD/rollout-YYYY-MM-DDTHH-MM-SS-<sessionID>.jsonl
-	// Use WalkDir instead of Walk for better performance (2-3x faster)
+	// Session files are stored as:
+	//   sessions/YYYY/MM/DD/rollout-YYYY-MM-DDTHH-MM-SS-<sessionID>.jsonl
+	// Match the exact "-<sessionID>.jsonl" suffix so a session ID that happens
+	// to be a substring of another file (or of the timestamp) cannot match.
+	suffix := "-" + sessionID + ".jsonl"
 	var found bool
 	err := filepath.WalkDir(sessionsDir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -412,8 +451,7 @@ func (s *Store) sessionExistsInProfile(sessionsDir, sessionID string) (bool, err
 		if d.IsDir() {
 			return nil
 		}
-		// Check if filename contains the sessionID
-		if strings.Contains(d.Name(), sessionID) && strings.HasSuffix(d.Name(), ".jsonl") {
+		if strings.HasSuffix(d.Name(), suffix) {
 			found = true
 			return filepath.SkipAll // Stop walking once found
 		}
@@ -429,7 +467,7 @@ func (s *Store) copyProfileFiles(sourceHome, targetHome, newBaseURL string) erro
 	agentsPath := filepath.Join(sourceHome, "AGENTS.md")
 	if data, err := os.ReadFile(agentsPath); err == nil {
 		targetPath := filepath.Join(targetHome, "AGENTS.md")
-		if err := os.WriteFile(targetPath, data, 0o644); err != nil {
+		if err := writeFileAtomic(targetPath, data, 0o644); err != nil {
 			return fmt.Errorf("write %s: %w", targetPath, err)
 		}
 	}
@@ -444,7 +482,7 @@ func (s *Store) copyProfileFiles(sourceHome, targetHome, newBaseURL string) erro
 	if data, err := os.ReadFile(configPath); err == nil {
 		updatedConfig := updateConfigBaseURL(string(data), newBaseURL)
 		targetPath := filepath.Join(targetHome, "config.toml")
-		if err := os.WriteFile(targetPath, []byte(updatedConfig), 0o600); err != nil {
+		if err := writeFileAtomic(targetPath, []byte(updatedConfig), 0o600); err != nil {
 			return fmt.Errorf("write %s: %w", targetPath, err)
 		}
 	} else {

@@ -121,10 +121,20 @@ Open multiple profiles in separate Terminal windows:
 ./codexs open work proxy-a -- -C /path/to/repo
 ```
 
-Use iTerm2 instead of Terminal:
+`codexs open` detects the current terminal (Terminal.app or iTerm2) and opens
+new windows there. Other terminals are not scriptable via AppleScript; use
+`codexs run` from inside them instead.
+
+Add a profile by cloning an existing one. The source profile's `config.toml`,
+`AGENTS.md`, `skills/`, and (unless overridden) `auth.json` are copied into the
+new profile home:
 
 ```bash
-./codexs open --terminal iterm2 work proxy-a -- -C /path/to/repo
+# Reuse work's credentials, point it at a different endpoint
+./codexs add prework --profile work --base-url https://new.api.com/v1
+
+# Exact clone of work, including its API key
+./codexs add prework2 --profile work
 ```
 
 List and inspect profiles:

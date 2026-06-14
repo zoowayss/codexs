@@ -9,6 +9,11 @@ import (
 	"time"
 )
 
+// sessionAccessRefresh is the minimum age of a cached entry's LastAccess before
+// a cache hit bothers to rewrite the cache. It keeps resume on the read path
+// cheap while still refreshing entries often enough relative to the prune TTL.
+const sessionAccessRefresh = 24 * time.Hour
+
 type SessionCacheEntry struct {
 	ProfileName string    `json:"profile_name"`
 	LastAccess  time.Time `json:"last_access"`
@@ -63,7 +68,7 @@ func (s *Store) SaveSessionCache(cache SessionCache) error {
 	}
 	data = append(data, '\n')
 	path := s.SessionCachePath()
-	if err := os.WriteFile(path, data, 0o600); err != nil {
+	if err := writeFileAtomic(path, data, 0o600); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
 	return nil

@@ -203,13 +203,48 @@ func TestStoreFindProfileForSession(t *testing.T) {
 		t.Fatalf("FindProfileForSession returned %q, want %q", profileName, "work")
 	}
 
-	// Verify session not found for non-existent session
-	_, err = store.FindProfileForSession("nonexistent-session-id")
+	// Verify session not found for a well-formed but non-existent session
+	_, err = store.FindProfileForSession("019fffff-ffff-7fff-bfff-ffffffffffff")
 	if err == nil {
 		t.Fatal("FindProfileForSession should return error for non-existent session")
 	}
 	if !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("FindProfileForSession error = %v, want 'not found'", err)
+	}
+
+	// Verify a malformed session ID is rejected before any filesystem scan
+	_, err = store.FindProfileForSession("../etc/passwd")
+	if err == nil {
+		t.Fatal("FindProfileForSession should reject a malformed session ID")
+	}
+	if !strings.Contains(err.Error(), "invalid session ID") {
+		t.Fatalf("FindProfileForSession error = %v, want 'invalid session ID'", err)
+	}
+}
+
+func TestStoreFindProfileForSessionDoesNotMatchSubstring(t *testing.T) {
+	root := t.TempDir()
+	store := NewStoreAt(root)
+	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
+
+	if _, err := store.AddProfile("work", "https://api.openai.com/v1", "test-key", now); err != nil {
+		t.Fatalf("AddProfile returned error: %v", err)
+	}
+
+	fullID := "019ea0e2-d130-7022-a3bd-e92e28e22397"
+	sessionsDir := filepath.Join(store.CodexHome("work"), "sessions", "2026", "06", "07")
+	if err := os.MkdirAll(sessionsDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll returned error: %v", err)
+	}
+	sessionFile := filepath.Join(sessionsDir, "rollout-2026-06-07T12-00-00-"+fullID+".jsonl")
+	if err := os.WriteFile(sessionFile, []byte("test"), 0o644); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+
+	// A prefix of the real session ID is a substring of the filename but not the
+	// "-<id>.jsonl" suffix, so it must not resolve to the profile.
+	if _, err := store.FindProfileForSession("019ea0e2"); err == nil {
+		t.Fatal("FindProfileForSession matched a substring of the session ID, want not found")
 	}
 }
 

@@ -1,6 +1,8 @@
 package codexs
 
 import (
+	"errors"
+	"fmt"
 	"net/url"
 	"regexp"
 	"strings"
@@ -14,6 +16,11 @@ const (
 )
 
 var profileNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
+// sessionIDPattern matches Codex session IDs (hexadecimal digits and hyphens,
+// e.g. the UUIDv7 used in rollout filenames). Keeping it strict also guards
+// the filename suffix lookup against path separators and other odd input.
+var sessionIDPattern = regexp.MustCompile(`^[0-9a-fA-F-]+$`)
 
 type Profile struct {
 	Name      string    `json:"name"`
@@ -43,6 +50,16 @@ func validateProfileName(name string) error {
 			Name:   name,
 			Reason: "must start with a letter or digit and contain only letters, digits, dot, underscore, or hyphen",
 		}
+	}
+	return nil
+}
+
+func validateSessionID(id string) error {
+	if id == "" {
+		return errors.New("session ID is required")
+	}
+	if !sessionIDPattern.MatchString(id) {
+		return fmt.Errorf("invalid session ID %q: must contain only hexadecimal digits and hyphens", id)
 	}
 	return nil
 }
