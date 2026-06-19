@@ -1,206 +1,199 @@
 # codexs
 
-`codexs` is a macOS Apple Silicon helper for running multiple isolated
-Codex CLI profiles. Each profile owns its own `CODEX_HOME`, `auth.json`, and
-`config.toml`, so API keys, base URLs, logs, sessions, and Codex-local state do
-not bleed between profiles.
+<p align="center">
+  <strong>A profile launchpad for isolated Codex CLI workflows.</strong>
+</p>
 
-This project currently ships a working implementation only for macOS on Apple
-Silicon (`darwin/arm64`). Platform behavior is behind a Go interface, so Linux,
-Windows, or other macOS variants can be added as separate implementations later.
-Other platforms currently compile through the unsupported implementation and
-return a clear "not supported yet" error for platform-dependent commands.
+<p align="center">
+  <a href="README.zh-CN.md">简体中文</a>
+</p>
 
-## Project Name Options
+<p align="center">
+  <img alt="Go 1.24" src="https://img.shields.io/badge/Go-1.24-00ADD8?logo=go&logoColor=white">
+  <img alt="Platform" src="https://img.shields.io/badge/platform-macOS%20Apple%20Silicon-000000?logo=apple&logoColor=white">
+  <img alt="Codex CLI" src="https://img.shields.io/badge/Codex-CLI-111111">
+  <img alt="Status" src="https://img.shields.io/badge/status-preview-blue">
+</p>
 
-The current directory and binary name are provisional. Possible names:
+---
 
-- Codex Lens
-- Codex Profiles
-- Codex Dock
-- Codex Switchboard
-- Codex Persona
-- Codex Matrix
-- Codex Harbor
-- Codex Passport
-- CodeNest for Codex
+`codexs` is a Codex CLI profile manager and launcher for macOS Apple Silicon. It gives every profile its own `CODEX_HOME`, `auth.json`, `config.toml`, logs, sessions, and local state, making it practical to switch between API keys, base URLs, and project identities without cross-contamination.
 
-## Build
+The goal is straightforward: turn multiple Codex environments into one clean, auditable, reusable local control plane.
 
-```bash
+## Why codexs
+
+- **Profile-level isolation**: every profile owns a separate Codex home, keeping credentials, config, and sessions apart.
+- **Multi-endpoint switching**: maintain official APIs, proxy APIs, and team gateways on one machine.
+- **Safer credential input**: read API keys from stdin or a file instead of leaving them in shell history.
+- **Multi-window launch**: open multiple profiles in separate Terminal.app or iTerm2 windows.
+- **Session-aware resume**: provide only a session ID and let `codexs` find the profile that owns it.
+- **Reusable workspaces**: clone `config.toml`, `AGENTS.md`, `skills/`, and credentials from an existing profile, while optionally replacing the base URL or API key.
+- **Clear platform boundary**: platform behavior lives behind the `Platform` interface, leaving room for future Linux, Windows, or other macOS implementations.
+
+## Support matrix
+
+| Item | Status |
+| --- | --- |
+| macOS Apple Silicon (`darwin/arm64`) | Supported |
+| Terminal.app / iTerm2 multi-window launch | Supported |
+| Go version | `1.24` |
+| Other platforms | Buildable, with platform-dependent commands returning an explicit unsupported error |
+
+## Quick start
+
+Build the binary:
+
+```sh
 go build -o codexs ./cmd/codexs
 ```
 
-Run tests:
+Initialize local storage:
 
-```bash
-go test ./...
-```
-
-If your Codex sandbox cannot write to Go's default build cache, point `GOCACHE`
-at a writable temp directory:
-
-```bash
-GOCACHE=/private/tmp/codexs-gocache go test ./...
-```
-
-## Profile Storage
-
-By default, profile metadata lives here:
-
-```text
-~/Library/Application Support/codexs/profiles.json
-```
-
-Each profile gets a separate Codex home:
-
-```text
-~/Library/Application Support/codexs/profiles/<profile>/codex-home
-```
-
-That profile home contains:
-
-- `config.toml` with the profile-specific base URL and file credential mode.
-- `auth.json` with the profile-specific API key.
-
-Treat every profile `auth.json` like a password.
-
-Set `CODEXS_HOME` if you want the helper data somewhere else.
-
-## Platform Architecture
-
-Platform-specific behavior is isolated behind `internal/codexs.Platform`.
-The common CLI code does not call `runtime.GOOS`, `osascript`, or process exec
-directly.
-
-Current implementations:
-
-- `platform_darwin_arm64.go`: real macOS Apple Silicon implementation. It
-  provides the default Application Support path, Terminal/iTerm2 launch, and
-  process replacement for `codexs run`.
-- `platform_unsupported.go`: shared temporary implementation for every other
-  target. It keeps the package buildable while returning "not supported yet"
-  from platform-dependent commands.
-
-To add another platform, create a new `platform_<os>_<arch>.go` file with a
-matching build tag and implement the same interface.
-
-## Usage
-
-Initialize storage:
-
-```bash
+```sh
 ./codexs init
 ```
 
-Add a profile. Reading the API key from stdin keeps it out of shell history:
+Add the first profile. Reading the API key from stdin is recommended:
 
-```bash
+```sh
 printf '%s' "$OPENAI_API_KEY" | ./codexs add work \
   --base-url https://api.openai.com/v1 \
   --api-key-stdin
 ```
 
-Add a second profile using another proxy or API endpoint:
+Start Codex in the current terminal:
 
-```bash
+```sh
+./codexs run work -- -C /path/to/repo
+```
+
+Open multiple profiles:
+
+```sh
+./codexs open work proxy-a -- -C /path/to/repo
+```
+
+Resume by session ID:
+
+```sh
+./codexs resume 019ea0e2-d130-7022-a3bd-e92e28e22397
+```
+
+## Command reference
+
+| Command | Description |
+| --- | --- |
+| `codexs init` | Initialize the profile store |
+| `codexs add <profile>` | Create a profile with dedicated Codex config and credentials |
+| `codexs add <profile> --profile <source>` | Clone from an existing profile |
+| `codexs update <profile>` | Update the base URL or API key |
+| `codexs list` / `codexs ls` | List profiles |
+| `codexs show <profile>` | Show base URL, Codex home, config paths, and timestamps |
+| `codexs run <profile> -- <codex args...>` | Launch Codex with one profile in the current terminal |
+| `codexs open <profile>... -- <codex args...>` | Launch one or more profiles in new terminal windows |
+| `codexs resume <sessionId>` | Find the profile for a session and resume it |
+| `codexs delete <profile> [--purge]` | Delete a profile; `--purge` also removes files |
+| `codexs home <profile>` | Print a profile's Codex home |
+| `codexs doctor` | Check platform, store, and Codex CLI availability |
+| `codexs names` | Print candidate project names |
+
+## Common workflows
+
+### Add another endpoint
+
+```sh
 printf '%s' "$OTHER_CODEX_API_KEY" | ./codexs add proxy-a \
   --base-url https://example.com/v1 \
   --api-key-stdin
 ```
 
-Run Codex in the current terminal with one profile:
+### Clone an existing profile
 
-```bash
-./codexs run work -- -C /path/to/repo
-```
+Reuse `work` credentials and config while changing the base URL:
 
-Open multiple profiles in separate Terminal windows:
-
-```bash
-./codexs open work proxy-a -- -C /path/to/repo
-```
-
-`codexs open` detects the current terminal (Terminal.app or iTerm2) and opens
-new windows there. Other terminals are not scriptable via AppleScript; use
-`codexs run` from inside them instead.
-
-Add a profile by cloning an existing one. The source profile's `config.toml`,
-`AGENTS.md`, `skills/`, and (unless overridden) `auth.json` are copied into the
-new profile home:
-
-```bash
-# Reuse work's credentials, point it at a different endpoint
+```sh
 ./codexs add prework --profile work --base-url https://new.api.com/v1
+```
 
-# Exact clone of work, including its API key
+Clone `work` exactly, including the API key:
+
+```sh
 ./codexs add prework2 --profile work
 ```
 
-List and inspect profiles:
+Profile cloning copies:
 
-```bash
-./codexs list
-./codexs show work
-```
+- `config.toml`
+- `AGENTS.md`
+- `skills/`
+- `auth.json`, unless a new API key is provided
+
+### Update configuration
 
 Update only the base URL:
 
-```bash
+```sh
 ./codexs update work --base-url https://api.openai.com/v1
 ```
 
 Update only the API key:
 
-```bash
+```sh
 printf '%s' "$NEW_OPENAI_API_KEY" | ./codexs update work --api-key-stdin
 ```
 
-Run a local health check:
+### Run diagnostics
 
-```bash
+```sh
 ./codexs doctor
 ```
 
-Resume a Codex session by its ID:
+`doctor` checks the current platform, profile store, profile count, `codex` binary, and `codex --version`.
 
-```bash
-./codexs resume 019ea0e2-d130-7022-a3bd-e92e28e22397
+## Storage layout
+
+By default, profile metadata is stored at:
+
+```text
+~/Library/Application Support/codexs/profiles.json
 ```
 
-The `resume` command automatically scans all profiles to find which one contains the session, then resumes it with the correct profile configuration.
+Each profile gets an isolated Codex home:
 
-## Session Management Workflow
+```text
+~/Library/Application Support/codexs/profiles/<profile>/codex-home
+```
 
-When working with Codex sessions across multiple profiles:
+That home contains:
 
-1. **Start a session** with a profile:
-   ```bash
-   ./codexs run work -- -C /path/to/repo
-   ```
+- `config.toml`: Codex configuration for the profile.
+- `auth.json`: API key for the profile.
+- `sessions/`: session records written by Codex CLI.
 
-2. **Note the session ID** that Codex displays when it starts (or use `codex /sessions` to list active sessions)
+To customize the store root:
 
-3. **Resume the session** later without remembering which profile was used:
-   ```bash
-   ./codexs resume 019ea0e2-d130-7022-a3bd-e92e28e22397
-   ```
+```sh
+set -x CODEXS_HOME /path/to/codexs-home
+```
 
-`codexs` automatically searches through all profile sessions directories to find the correct profile for the given session ID.
+To point at a specific Codex binary:
 
-## How Isolation Works
+```sh
+set -x CODEXS_CODEX_BIN /path/to/codex
+```
 
-For every profile, `codexs run` sets:
+## How isolation works
+
+For every `codexs run <profile>` invocation, `codexs` sets:
 
 ```text
 CODEX_HOME=<profile codex-home>
 ```
 
-It also passes equivalent `-c` overrides to the Codex CLI at launch time. This
-keeps the selected profile's base URL and file credential mode above any
-project-local `.codex/config.toml` layer.
+It also passes the same provider settings to Codex CLI through `-c key=value` overrides, so the selected profile's base URL and file credential mode take precedence over project-local `.codex/config.toml`.
 
-The generated `config.toml` sets a profile-specific model provider:
+The generated `config.toml` looks like this:
 
 ```toml
 cli_auth_credentials_store = "file"
@@ -213,8 +206,7 @@ base_url = "https://api.openai.com/v1"
 requires_openai_auth = true
 ```
 
-The generated `auth.json` stores the API key using Codex's file credential
-shape:
+The generated `auth.json` looks like this:
 
 ```json
 {
@@ -222,9 +214,55 @@ shape:
 }
 ```
 
-`codexs open` launches a new terminal window that calls
-`codexs run <profile>`. The API key is not embedded in the terminal
-command.
+`codexs open` launches a new terminal window that calls `codexs run <profile>`. The API key is not embedded in the terminal command.
+
+## Session resume
+
+Codex session files usually live under the profile Codex home's `sessions/` directory. When you run:
+
+```sh
+./codexs resume <sessionId>
+```
+
+`codexs` will:
+
+1. Validate the session ID format.
+2. Read the local session cache.
+3. Scan every profile's `sessions/` directory on cache miss.
+4. Record the discovered mapping and invoke `codex resume <sessionId>` with the right profile.
+
+You do not need to remember which profile originally created a session.
+
+## Development
+
+Run tests:
+
+```sh
+go test ./...
+```
+
+If a sandbox cannot write to Go's default build cache, point `GOCACHE` at a writable temporary directory:
+
+```sh
+env GOCACHE=/private/tmp/codexs-gocache go test ./...
+```
+
+Project layout:
+
+```text
+cmd/codexs/              CLI entrypoint
+internal/codexs/app.go   command dispatch and runtime flow
+internal/codexs/store.go profile state, config, and credential writes
+internal/codexs/config.go Codex config rendering
+internal/codexs/platform_*.go platform adapters
+```
+
+## Security notes
+
+- Prefer `--api-key-stdin` or `--api-key-file`.
+- Treat every profile's `auth.json` as a secret file.
+- `codexs` generates file-based credentials and avoids exposing API keys in `open` commands.
+- Deleting a profile removes the profile record by default; use `--purge` when you also want to remove its files.
 
 ## Acknowledgments
 
