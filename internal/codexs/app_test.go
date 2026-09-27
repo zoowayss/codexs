@@ -81,6 +81,14 @@ func TestStoreAddProfileWritesCodexHome(t *testing.T) {
 	}
 }
 
+func TestStoreCodexHomeUsesProfileDirectory(t *testing.T) {
+	store := NewStoreAt(t.TempDir())
+	want := store.ProfileRoot("oaitest")
+	if got := store.CodexHome("oaitest"); got != want {
+		t.Fatalf("CodexHome = %q, want profile directory %q", got, want)
+	}
+}
+
 func TestBuildRunShellCommandQuotesArgs(t *testing.T) {
 	got := buildRunShellCommand("/Applications/My Tool/codexs", "team'a", []string{"-C", "/tmp/has space"})
 	want := "'/Applications/My Tool/codexs' run 'team'\\''a' -- '-C' '/tmp/has space'"
@@ -89,18 +97,53 @@ func TestBuildRunShellCommandQuotesArgs(t *testing.T) {
 	}
 }
 
-func TestProfileConfigArgs(t *testing.T) {
-	args := profileConfigArgs(Profile{Name: "work", BaseURL: "https://example.com/v1"})
-	joined := strings.Join(args, "\n")
-	for _, want := range []string{
-		`cli_auth_credentials_store="file"`,
-		`model_provider="profile"`,
-		`model_providers.profile.base_url="https://example.com/v1"`,
-		`model_providers.profile.requires_openai_auth=true`,
-	} {
-		if !strings.Contains(joined, want) {
-			t.Fatalf("profileConfigArgs missing %q in %#v", want, args)
-		}
+func TestCLIListEscapesCodexHomeSpaces(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "Application Support", "codexs")
+	store := NewStoreAt(root)
+	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
+	if _, err := store.AddProfile("work", "https://api.openai.com/v1", "test-key", now); err != nil {
+		t.Fatalf("AddProfile returned error: %v", err)
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cli := &CLI{
+		stdin:    strings.NewReader(""),
+		stdout:   &stdout,
+		stderr:   &stderr,
+		now:      time.Now,
+		store:    store,
+		platform: testPlatform{id: "test/os", root: root},
+	}
+
+	if code := cli.Run([]string{"list"}); code != 0 {
+		t.Fatalf("list exit code = %d, stderr: %s", code, stderr.String())
+	}
+	want := shellEscapeSpaces(store.CodexHome("work"))
+	if !strings.Contains(stdout.String(), want) {
+		t.Fatalf("list output missing escaped CODEX HOME %q:\n%s", want, stdout.String())
+	}
+	if strings.Contains(stdout.String(), store.CodexHome("work")) {
+		t.Fatalf("list output contains unescaped CODEX HOME %q:\n%s", store.CodexHome("work"), stdout.String())
+	}
+}
+
+func TestExecCodexUsesOnlyExtraArgs(t *testing.T) {
+	platform := &recordingPlatform{}
+	var stderr bytes.Buffer
+	cli := &CLI{stderr: &stderr, platform: platform}
+	env := []string{"CODEX_HOME=/tmp/profile-home"}
+
+	if code := cli.execCodex("/usr/local/bin/codex", env, []string{"-C", "/tmp/project"}); code != 0 {
+		t.Fatalf("execCodex exit code = %d, stderr: %s", code, stderr.String())
+	}
+
+	want := []string{"/usr/local/bin/codex", "-C", "/tmp/project"}
+	if strings.Join(platform.argv, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("argv = %#v, want %#v", platform.argv, want)
+	}
+	if strings.Join(platform.env, "\x00") != strings.Join(env, "\x00") {
+		t.Fatalf("env = %#v, want %#v", platform.env, env)
 	}
 }
 
@@ -152,6 +195,13 @@ type testPlatform struct {
 	unsupported error
 }
 
+type recordingPlatform struct {
+	testPlatform
+	path string
+	argv []string
+	env  []string
+}
+
 func (p testPlatform) ID() string {
 	return p.id
 }
@@ -170,6 +220,13 @@ func (p testPlatform) OpenTerminal(shellCommand string) error {
 
 func (p testPlatform) ExecProcess(path string, argv []string, env []string) error {
 	return p.unsupported
+}
+
+func (p *recordingPlatform) ExecProcess(path string, argv []string, env []string) error {
+	p.path = path
+	p.argv = append([]string(nil), argv...)
+	p.env = append([]string(nil), env...)
+	return nil
 }
 
 func TestStoreFindProfileForSession(t *testing.T) {

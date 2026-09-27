@@ -29,3 +29,7 @@ func shellQuote(value string) string {
 	b.WriteByte('\'')
 	return b.String()
 }
+
+func shellEscapeSpaces(value string) string {
+	return strings.ReplaceAll(value, " ", `\ `)
+}

@@ -290,7 +290,7 @@ func (c *CLI) cmdList(args []string) int {
 	tw := tabwriter.NewWriter(c.stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "NAME\tBASE URL\tCODEX HOME")
 	for _, profile := range profiles {
-		fmt.Fprintf(tw, "%s\t%s\t%s\n", profile.Name, profile.BaseURL, c.store.CodexHome(profile.Name))
+		fmt.Fprintf(tw, "%s\t%s\t%s\n", profile.Name, profile.BaseURL, shellEscapeSpaces(c.store.CodexHome(profile.Name)))
 	}
 	tw.Flush()
 	return 0
@@ -386,12 +386,12 @@ func (c *CLI) cmdRun(args []string) int {
 		fmt.Fprintf(c.stderr, "error: %v\n", err)
 		return 2
 	}
-	profile, codexPath, env, err := c.prepareCodexExecution(profileName)
+	_, codexPath, env, err := c.prepareCodexExecution(profileName)
 	if err != nil {
 		fmt.Fprintf(c.stderr, "error: %v\n", err)
 		return 1
 	}
-	return c.execCodex(profile, codexPath, env, codexArgs)
+	return c.execCodex(codexPath, env, codexArgs)
 }
 
 func (c *CLI) cmdOpen(args []string) int {
@@ -458,14 +458,13 @@ func (c *CLI) cmdResume(args []string) int {
 		return 1
 	}
 	fmt.Fprintf(c.stdout, "resuming session %s with profile %q\n", sessionID, profile.Name)
-	return c.execCodex(profile, codexPath, env, []string{"resume", sessionID})
+	return c.execCodex(codexPath, env, []string{"resume", sessionID})
 }
 
-// execCodex replaces the current process with codex, configured for the given
-// profile and invoked with the supplied extra arguments.
-func (c *CLI) execCodex(profile Profile, codexPath string, env, extraArgs []string) int {
-	argv := append([]string{codexPath}, profileConfigArgs(profile)...)
-	argv = append(argv, extraArgs...)
+// execCodex replaces the current process with codex, using the supplied
+// environment and extra arguments.
+func (c *CLI) execCodex(codexPath string, env, extraArgs []string) int {
+	argv := append([]string{codexPath}, extraArgs...)
 	if err := c.platform.ExecProcess(codexPath, argv, env); err != nil {
 		fmt.Fprintf(c.stderr, "error: start codex: %v\n", err)
 		return 1
@@ -694,8 +693,4 @@ func withEnv(env []string, key, value string) []string {
 		out = append(out, item)
 	}
 	return append(out, prefix+value)
-}
-
-func profileConfigArgs(profile Profile) []string {
-	return codexConfigArgs(profile.BaseURL)
 }

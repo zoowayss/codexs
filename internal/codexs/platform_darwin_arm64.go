@@ -31,7 +31,7 @@ func (macOSAppleSiliconPlatform) DefaultStoreRoot(appID string) (string, error) 
 	if err != nil {
 		return "", fmt.Errorf("resolve home directory: %w", err)
 	}
-	return filepath.Join(home, "Library", "Application Support", appID), nil
+	return filepath.Join(home, "."+appID), nil
 }
 
 func (macOSAppleSiliconPlatform) OpenTerminal(shellCommand string) error {

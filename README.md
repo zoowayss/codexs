@@ -156,13 +156,13 @@ printf '%s' "$NEW_OPENAI_API_KEY" | ./codexs update work --api-key-stdin
 By default, profile metadata is stored at:
 
 ```text
-~/Library/Application Support/codexs/profiles.json
+~/.codexs/profiles.json
 ```
 
 Each profile gets an isolated Codex home:
 
 ```text
-~/Library/Application Support/codexs/profiles/<profile>/codex-home
+~/.codexs/profiles/<profile>
 ```
 
 That home contains:
@@ -188,10 +188,10 @@ set -x CODEXS_CODEX_BIN /path/to/codex
 For every `codexs run <profile>` invocation, `codexs` sets:
 
 ```text
-CODEX_HOME=<profile codex-home>
+CODEX_HOME=~/.codexs/profiles/<profile>
 ```
 
-It also passes the same provider settings to Codex CLI through `-c key=value` overrides, so the selected profile's base URL and file credential mode take precedence over project-local `.codex/config.toml`.
+Codex then reads the selected profile's `config.toml` and `auth.json` from that directory. Edit the profile's `config.toml` directly when you need to customize its provider settings; `codexs` does not add command-line `-c` overrides at launch time.
 
 The generated `config.toml` looks like this:
 

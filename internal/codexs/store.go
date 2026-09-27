@@ -51,7 +51,7 @@ func (s *Store) ProfileRoot(name string) string {
 }
 
 func (s *Store) CodexHome(name string) string {
-	return filepath.Join(s.ProfileRoot(name), "codex-home")
+	return s.ProfileRoot(name)
 }
 
 func (s *Store) Load() (State, error) {

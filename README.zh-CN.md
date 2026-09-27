@@ -156,13 +156,13 @@ printf '%s' "$NEW_OPENAI_API_KEY" | ./codexs update work --api-key-stdin
 默认情况下，`codexs` 的元数据保存在：
 
 ```text
-~/Library/Application Support/codexs/profiles.json
+~/.codexs/profiles.json
 ```
 
 每个 profile 都有独立的 Codex home：
 
 ```text
-~/Library/Application Support/codexs/profiles/<profile>/codex-home
+~/.codexs/profiles/<profile>
 ```
 
 其中包含：
@@ -188,10 +188,10 @@ set -x CODEXS_CODEX_BIN /path/to/codex
 每次执行 `codexs run <profile>` 时，`codexs` 会为子进程设置：
 
 ```text
-CODEX_HOME=<profile codex-home>
+CODEX_HOME=~/.codexs/profiles/<profile>
 ```
 
-同时，它会把同一套 provider 配置通过 `-c key=value` 参数传给 Codex CLI，确保当前 profile 的 base URL 和文件凭据模式优先于项目内的 `.codex/config.toml`。
+Codex 会从该目录读取当前 profile 的 `config.toml` 和 `auth.json`。如果需要自定义 provider 配置，可以直接编辑 profile 的 `config.toml`；启动时 `codexs` 不会再额外注入 `-c` 参数。
 
 生成的 `config.toml` 形如：
 
