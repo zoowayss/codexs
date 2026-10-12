@@ -90,8 +90,13 @@ func TestStoreCodexHomeUsesProfileDirectory(t *testing.T) {
 }
 
 func TestBuildRunShellCommandQuotesArgs(t *testing.T) {
-	got := buildRunShellCommand("/Applications/My Tool/codexs", "team'a", []string{"-C", "/tmp/has space"})
+	got := buildRunShellCommand("/Applications/My Tool/codexs", "team'a", []string{"-C", "/tmp/has space"}, false)
 	want := "'/Applications/My Tool/codexs' run 'team'\\''a' -- '-C' '/tmp/has space'"
+	if got != want {
+		t.Fatalf("command = %q, want %q", got, want)
+	}
+	got = buildRunShellCommand("/usr/local/bin/codexs", "work", nil, true)
+	want = "'/usr/local/bin/codexs' run --daemon 'work'"
 	if got != want {
 		t.Fatalf("command = %q, want %q", got, want)
 	}
@@ -134,7 +139,7 @@ func TestExecCodexUsesOnlyExtraArgs(t *testing.T) {
 	cli := &CLI{stderr: &stderr, platform: platform}
 	env := []string{"CODEX_HOME=/tmp/profile-home"}
 
-	if code := cli.execCodex("/usr/local/bin/codex", env, []string{"-C", "/tmp/project"}); code != 0 {
+	if code := cli.execCodex("/usr/local/bin/codex", env, []string{"-C", "/tmp/project"}, true); code != 0 {
 		t.Fatalf("execCodex exit code = %d, stderr: %s", code, stderr.String())
 	}
 
@@ -382,7 +387,7 @@ func BenchmarkBuildRunShellCommand(b *testing.B) {
 	profile := "work"
 	args := []string{"-C", "/home/user/project", "--verbose"}
 	for i := 0; i < b.N; i++ {
-		_ = buildRunShellCommand(path, profile, args)
+		_ = buildRunShellCommand(path, profile, args, false)
 	}
 }
 

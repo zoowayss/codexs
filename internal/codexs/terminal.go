@@ -4,10 +4,13 @@ import (
 	"strings"
 )
 
-func buildRunShellCommand(executable, profileName string, codexArgs []string) string {
+func buildRunShellCommand(executable, profileName string, codexArgs []string, useDaemon bool) string {
 	var b strings.Builder
 	b.WriteString(shellQuote(executable))
 	b.WriteString(" run ")
+	if useDaemon {
+		b.WriteString("--daemon ")
+	}
 	b.WriteString(shellQuote(profileName))
 	if len(codexArgs) > 0 {
 		b.WriteString(" --")

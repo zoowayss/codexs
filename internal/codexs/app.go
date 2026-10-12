@@ -99,9 +99,9 @@ Usage:
   codexs update <profile> [--base-url <url>] [--api-key <key> | --api-key-file <path> | --api-key-stdin]
   codexs list
   codexs show <profile>
-  codexs run <profile> [-- <codex args...>]
-  codexs open <profile>... [-- <codex args...>]
-  codexs resume <sessionId>
+  codexs run [--daemon] <profile> [-- <codex args...>]
+  codexs open [--daemon] <profile>... [-- <codex args...>]
+  codexs resume [--daemon] <sessionId>
   codexs stop
   codexs delete <profile> [--purge]
   codexs doctor
@@ -116,8 +116,10 @@ Examples:
   codexs resume 019ea0e2-d130-7022-a3bd-e92e28e22397
   codexs stop
 
-stop interrupts background tasks for all profiles in the current store.
-The default ~/.codex background server, credentials, and history are preserved.
+run, open, and resume pass --no-daemon to Codex unless --daemon is given.
+stop interrupts background tasks for all profiles in the current store and
+removes their downloaded daemon packages. The default ~/.codex background
+server, credentials, and history are preserved.
 
 `)
 }
@@ -388,7 +390,13 @@ func (c *CLI) cmdRun(args []string) int {
 	if !c.requireSupportedPlatform() {
 		return 1
 	}
-	profileName, codexArgs, err := parseSingleProfileAndCodexArgs(args)
+	fs := flag.NewFlagSet("run", flag.ContinueOnError)
+	fs.SetOutput(c.stderr)
+	useDaemon := fs.Bool("daemon", false, "use Codex's shared background server")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	profileName, codexArgs, err := parseSingleProfileAndCodexArgs(fs.Args())
 	if err != nil {
 		fmt.Fprintf(c.stderr, "error: %v\n", err)
 		return 2
@@ -398,7 +406,7 @@ func (c *CLI) cmdRun(args []string) int {
 		fmt.Fprintf(c.stderr, "error: %v\n", err)
 		return 1
 	}
-	return c.execCodex(codexPath, env, codexArgs)
+	return c.execCodex(codexPath, env, codexArgs, *useDaemon)
 }
 
 func (c *CLI) cmdOpen(args []string) int {
@@ -407,6 +415,7 @@ func (c *CLI) cmdOpen(args []string) int {
 	}
 	fs := flag.NewFlagSet("open", flag.ContinueOnError)
 	fs.SetOutput(c.stderr)
+	useDaemon := fs.Bool("daemon", false, "use Codex's shared background server")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -430,7 +439,7 @@ func (c *CLI) cmdOpen(args []string) int {
 			fmt.Fprintf(c.stderr, "error: %v\n", err)
 			return 1
 		}
-		command := buildRunShellCommand(executable, profile.Name, codexArgs)
+		command := buildRunShellCommand(executable, profile.Name, codexArgs, *useDaemon)
 		if err := c.platform.OpenTerminal(command); err != nil {
 			fmt.Fprintf(c.stderr, "error: open terminal for %q: %v\n", profile.Name, err)
 			return 1
@@ -446,6 +455,7 @@ func (c *CLI) cmdResume(args []string) int {
 	}
 	fs := flag.NewFlagSet("resume", flag.ContinueOnError)
 	fs.SetOutput(c.stderr)
+	useDaemon := fs.Bool("daemon", false, "use Codex's shared background server")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -465,13 +475,19 @@ func (c *CLI) cmdResume(args []string) int {
 		return 1
 	}
 	fmt.Fprintf(c.stdout, "resuming session %s with profile %q\n", sessionID, profile.Name)
-	return c.execCodex(codexPath, env, []string{"resume", sessionID})
+	return c.execCodex(codexPath, env, []string{"resume", sessionID}, *useDaemon)
 }
 
 // execCodex replaces the current process with codex, using the supplied
-// environment and extra arguments.
-func (c *CLI) execCodex(codexPath string, env, extraArgs []string) int {
-	argv := append([]string{codexPath}, extraArgs...)
+// environment and extra arguments. Unless useDaemon is set, codex runs without
+// the shared app-server daemon so each launch reads the profile's current
+// config and auth, and no per-profile background server is left running.
+func (c *CLI) execCodex(codexPath string, env, extraArgs []string, useDaemon bool) int {
+	argv := []string{codexPath}
+	if !useDaemon {
+		argv = append(argv, "--no-daemon")
+	}
+	argv = append(argv, extraArgs...)
 	if err := c.platform.ExecProcess(codexPath, argv, env); err != nil {
 		fmt.Fprintf(c.stderr, "error: start codex: %v\n", err)
 		return 1

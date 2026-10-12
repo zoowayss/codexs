@@ -90,10 +90,10 @@ Resume by session ID:
 | `codexs update <profile>` | Update the base URL or API key |
 | `codexs list` / `codexs ls` | List profiles |
 | `codexs show <profile>` | Show base URL, Codex home, config paths, and timestamps |
-| `codexs run <profile> -- <codex args...>` | Launch Codex with one profile in the current terminal |
-| `codexs open <profile>... -- <codex args...>` | Launch one or more profiles in new terminal windows |
-| `codexs resume <sessionId>` | Find the profile for a session and resume it |
-| `codexs stop` | Stop background servers for all profiles in the current store; keep the default `~/.codex` server |
+| `codexs run [--daemon] <profile> -- <codex args...>` | Launch Codex with one profile in the current terminal |
+| `codexs open [--daemon] <profile>... -- <codex args...>` | Launch one or more profiles in new terminal windows |
+| `codexs resume [--daemon] <sessionId>` | Find the profile for a session and resume it |
+| `codexs stop` | Stop background servers and remove downloaded daemon packages for all profiles in the current store; keep the default `~/.codex` server |
 | `codexs delete <profile> [--purge]` | Delete a profile; `--purge` also removes files |
 | `codexs home <profile>` | Print a profile's Codex home |
 | `codexs doctor` | Check platform, store, and Codex CLI availability |
@@ -152,20 +152,29 @@ printf '%s' "$NEW_OPENAI_API_KEY" | ./codexs update work --api-key-stdin
 
 `doctor` checks the current platform, profile store, profile count, `codex` binary, and `codex --version`.
 
-### Reload credentials after editing auth.json
+### Background server (daemon)
 
-After changing a profile's `auth.json`, stop the profile background servers before launching again:
+Recent Codex CLI versions run the TUI against a shared `app-server` daemon per `CODEX_HOME`. Since every profile has its own `CODEX_HOME`, that would leave one long-lived daemon (plus an updater and its own downloaded package under `packages/app-server-daemon`) per profile, and a running daemon keeps the config and credentials it started with.
+
+`run`, `open`, and `resume` therefore pass `--no-daemon` to Codex by default: each launch reads the profile's current `config.toml` and `auth.json`, and nothing is left running after Codex exits. Pass `--daemon` to use the shared background server instead:
+
+```sh
+./codexs run --daemon work -- -C /path/to/repo
+```
+
+### Stop profile background servers
+
+To clean up daemons started by earlier Codex versions or by `--daemon` launches:
 
 ```sh
 ./codexs stop
-./codexs run work
 ```
 
-`stop` calls `codex app-server daemon stop` with each registered profile's `CODEX_HOME`. It targets all profiles in the current store (including a custom `CODEXS_HOME`), leaving the default `~/.codex` server and other stores alone. Connected profile tasks are interrupted; configuration, credentials, and saved history are retained. Profiles with no running server are also handled by Codex's stop command.
+`stop` calls `codex app-server daemon stop` with each registered profile's `CODEX_HOME`, then removes that profile's `packages/app-server-daemon` directory. It targets all profiles in the current store (including a custom `CODEXS_HOME`), leaving the default `~/.codex` server and other stores alone. Connected profile tasks are interrupted; configuration, credentials, and saved history are retained. Profiles with no running server are also handled by Codex's stop command.
 
-The next normal `run` can start a fresh background server and load the profile's current file-based credentials. `run` does not add `--no-daemon`. Stop after editing the file, and avoid starting another client for that profile between cleanup and your next launch. This clears background authentication state; if you explicitly configured a different credential source, that source still applies.
+If you use `--daemon`, run `stop` after editing a profile's `auth.json` or running `codexs update`, so the next launch starts a daemon with the current settings.
 
-This command requires a Codex CLI version that supports `app-server daemon stop`. It reports failures per profile, attempts the remaining profiles, and exits nonzero if any stop command fails. It does not delete credentials or kill processes by name.
+This command requires a Codex CLI version that supports `app-server daemon stop`. It reports failures per profile, attempts the remaining profiles, and exits nonzero if any stop command fails. A profile whose stop fails keeps its daemon package. It does not delete credentials or kill processes by name.
 
 ## Storage layout
 

@@ -101,6 +101,10 @@ func TestCLIStopProfileDaemons(t *testing.T) {
 						t.Fatal(err)
 					}
 				}
+				packageDir := filepath.Join(store.CodexHome(name), "packages", "app-server-daemon")
+				if err := os.MkdirAll(packageDir, 0o700); err != nil {
+					t.Fatal(err)
+				}
 			}
 			if tc.invalidName != "" {
 				state, err := store.Load()
@@ -170,6 +174,17 @@ func TestCLIStopProfileDaemons(t *testing.T) {
 			if !slices.Equal(gotProfiles, tc.wantProfiles) {
 				t.Fatalf("stopped profiles = %v, want %v", gotProfiles, tc.wantProfiles)
 			}
+			for _, name := range tc.profiles {
+				packageDir := filepath.Join(store.CodexHome(name), "packages", "app-server-daemon")
+				_, err := os.Stat(packageDir)
+				stopped := slices.Contains(tc.wantProfiles, name) && name != tc.failProfile
+				if stopped && !os.IsNotExist(err) {
+					t.Fatalf("stop kept daemon package %s (stat err: %v)", packageDir, err)
+				}
+				if !stopped && err != nil {
+					t.Fatalf("daemon package %s should be kept: %v", packageDir, err)
+				}
+			}
 			for path, want := range preserved {
 				got, err := os.ReadFile(path)
 				if err != nil {
@@ -183,21 +198,42 @@ func TestCLIStopProfileDaemons(t *testing.T) {
 	}
 }
 
-func TestCLIRunKeepsDefaultDaemonBehavior(t *testing.T) {
-	store := NewStoreAt(t.TempDir())
-	if _, err := store.AddProfile("work", "https://api.openai.com/v1", "test-key", time.Now()); err != nil {
-		t.Fatal(err)
-	}
+func TestCLILaunchDaemonMode(t *testing.T) {
 	codexPath := "/usr/local/bin/codex"
-	t.Setenv("CODEXS_CODEX_BIN", codexPath)
-	platform := &recordingPlatform{}
-	var stderr bytes.Buffer
-	cli := &CLI{store: store, platform: platform, stderr: &stderr}
-	if code := cli.Run([]string{"run", "work", "--", "-C", "/tmp/my project"}); code != 0 {
-		t.Fatalf("run exit code = %d, stderr: %s", code, stderr.String())
+	sessionID := "019ea0e2-d130-7022-a3bd-e92e28e22397"
+	cases := []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{name: "run disables daemon", args: []string{"run", "work", "--", "-C", "/tmp/my project"}, want: []string{codexPath, "--no-daemon", "-C", "/tmp/my project"}},
+		{name: "run opts into daemon", args: []string{"run", "--daemon", "work", "--", "-C", "/tmp/my project"}, want: []string{codexPath, "-C", "/tmp/my project"}},
+		{name: "resume disables daemon", args: []string{"resume", sessionID}, want: []string{codexPath, "--no-daemon", "resume", sessionID}},
+		{name: "resume opts into daemon", args: []string{"resume", "--daemon", sessionID}, want: []string{codexPath, "resume", sessionID}},
 	}
-	want := []string{codexPath, "-C", "/tmp/my project"}
-	if !slices.Equal(platform.argv, want) {
-		t.Fatalf("argv = %#v, want %#v", platform.argv, want)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := NewStoreAt(t.TempDir())
+			if _, err := store.AddProfile("work", "https://api.openai.com/v1", "test-key", time.Now()); err != nil {
+				t.Fatal(err)
+			}
+			sessionDir := filepath.Join(store.CodexHome("work"), "sessions", "2026", "06", "07")
+			if err := os.MkdirAll(sessionDir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(sessionDir, "rollout-2026-06-07T12-00-00-"+sessionID+".jsonl"), []byte("{}\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("CODEXS_CODEX_BIN", codexPath)
+			platform := &recordingPlatform{}
+			var stdout, stderr bytes.Buffer
+			cli := &CLI{store: store, platform: platform, stdout: &stdout, stderr: &stderr}
+			if code := cli.Run(tc.args); code != 0 {
+				t.Fatalf("exit code = %d, stderr: %s", code, stderr.String())
+			}
+			if !slices.Equal(platform.argv, tc.want) {
+				t.Fatalf("argv = %#v, want %#v", platform.argv, tc.want)
+			}
+		})
 	}
 }

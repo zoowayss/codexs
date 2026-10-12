@@ -90,10 +90,10 @@ printf '%s' "$OPENAI_API_KEY" | ./codexs add work \
 | `codexs update <profile>` | 更新 base URL 或 API key |
 | `codexs list` / `codexs ls` | 列出所有 profile |
 | `codexs show <profile>` | 查看 profile 的 base URL、Codex home、配置路径和时间戳 |
-| `codexs run <profile> -- <codex args...>` | 使用指定 profile 在当前终端启动 Codex |
-| `codexs open <profile>... -- <codex args...>` | 在新终端窗口中启动一个或多个 profile |
-| `codexs resume <sessionId>` | 自动定位 session 所属 profile 并恢复会话 |
-| `codexs stop` | 停止当前存储目录中所有 profile 的后台服务，保留默认 `~/.codex` 后台 |
+| `codexs run [--daemon] <profile> -- <codex args...>` | 使用指定 profile 在当前终端启动 Codex |
+| `codexs open [--daemon] <profile>... -- <codex args...>` | 在新终端窗口中启动一个或多个 profile |
+| `codexs resume [--daemon] <sessionId>` | 自动定位 session 所属 profile 并恢复会话 |
+| `codexs stop` | 停止当前存储目录中所有 profile 的后台服务并删除已下载的 daemon 包，保留默认 `~/.codex` 后台 |
 | `codexs delete <profile> [--purge]` | 删除 profile；加 `--purge` 时同时删除文件 |
 | `codexs home <profile>` | 输出该 profile 的 Codex home |
 | `codexs doctor` | 检查平台、存储目录和 Codex CLI 可用性 |
@@ -152,20 +152,29 @@ printf '%s' "$NEW_OPENAI_API_KEY" | ./codexs update work --api-key-stdin
 
 `doctor` 会检查当前平台、profile 存储位置、profile 数量、`codex` 可执行文件以及 `codex --version`。
 
-### 修改 auth.json 后重新加载凭据
+### 后台服务（daemon）
 
-修改 profile 的 `auth.json` 后，先停止 profile 后台服务，再重新启动：
+新版 Codex CLI 会让 TUI 连接按 `CODEX_HOME` 共享的 `app-server` 后台服务。由于每个 profile 都有独立的 `CODEX_HOME`，这会导致每个 profile 各留一个常驻 daemon（外加一个 updater，以及位于 `packages/app-server-daemon` 下的独立安装包），而且运行中的 daemon 会一直沿用启动时的配置和凭据。
+
+因此 `run`、`open`、`resume` 默认会给 Codex 传 `--no-daemon`：每次启动都读取 profile 当前的 `config.toml` 和 `auth.json`，Codex 退出后不会留下后台进程。如需使用共享后台服务，加 `--daemon`：
+
+```sh
+./codexs run --daemon work -- -C /path/to/repo
+```
+
+### 停止 profile 后台服务
+
+清理旧版 Codex 或 `--daemon` 启动留下的后台服务：
 
 ```sh
 ./codexs stop
-./codexs run work
 ```
 
-`stop` 会为每个已注册 profile 设置对应的 `CODEX_HOME`，逐个调用 `codex app-server daemon stop`。范围是当前存储目录下的所有 profile（支持自定义 `CODEXS_HOME`），保留默认 `~/.codex` 和其他存储目录的后台服务。连接这些 profile 的任务会中断；配置、凭据和已保存的历史会保留。没有后台服务运行的 profile 也由 Codex 的停止命令正常处理。
+`stop` 会为每个已注册 profile 设置对应的 `CODEX_HOME`，逐个调用 `codex app-server daemon stop`，成功后删除该 profile 的 `packages/app-server-daemon` 目录。范围是当前存储目录下的所有 profile（支持自定义 `CODEXS_HOME`），保留默认 `~/.codex` 和其他存储目录的后台服务。连接这些 profile 的任务会中断；配置、凭据和已保存的历史会保留。没有后台服务运行的 profile 也由 Codex 的停止命令正常处理。
 
-下次正常 `run` 时，Codex 可以启动新的后台服务，读取 profile 文件中当前的凭据；`run` 不会自动添加 `--no-daemon`。请在修改文件后执行清理，并避免其他客户端在清理与下次启动之间抢先启动同一 profile。此功能清除后台中的认证状态；如果你显式配置了其他凭据来源，仍以该来源为准。
+如果使用 `--daemon`，修改 profile 的 `auth.json` 或执行 `codexs update` 后请先执行 `stop`，下次启动才会用当前设置拉起新的 daemon。
 
-此命令要求 Codex CLI 支持 `app-server daemon stop`。任何 profile 停止失败都会明确报告，同时继续尝试其余 profile；有失败时退出码非零。命令不会删除凭据，也不会按进程名称批量杀进程。
+此命令要求 Codex CLI 支持 `app-server daemon stop`。任何 profile 停止失败都会明确报告，同时继续尝试其余 profile；有失败时退出码非零，停止失败的 profile 会保留其 daemon 包。命令不会删除凭据，也不会按进程名称批量杀进程。
 
 ## 存储位置
 

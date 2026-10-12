@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 )
 
 func (c *CLI) cmdStop(args []string) int {
@@ -51,7 +52,15 @@ func (c *CLI) cmdStop(args []string) int {
 		if err := cmd.Run(); err != nil {
 			fmt.Fprintf(c.stderr, "error: stop background server for profile %q: %v\n", profile.Name, err)
 			failed++
+			continue
 		}
+		packageDir := filepath.Join(codexHome, "packages", "app-server-daemon")
+		if err := os.RemoveAll(packageDir); err != nil {
+			fmt.Fprintf(c.stderr, "error: remove daemon package for profile %q: %v\n", profile.Name, err)
+			failed++
+			continue
+		}
+		fmt.Fprintf(c.stdout, "removed %s\n", packageDir)
 	}
 	if failed > 0 {
 		fmt.Fprintf(c.stderr, "failed to stop background servers for %d of %d profiles\n", failed, len(profiles))
