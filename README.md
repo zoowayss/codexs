@@ -93,6 +93,7 @@ Resume by session ID:
 | `codexs run <profile> -- <codex args...>` | Launch Codex with one profile in the current terminal |
 | `codexs open <profile>... -- <codex args...>` | Launch one or more profiles in new terminal windows |
 | `codexs resume <sessionId>` | Find the profile for a session and resume it |
+| `codexs stop` | Stop background servers for all profiles in the current store; keep the default `~/.codex` server |
 | `codexs delete <profile> [--purge]` | Delete a profile; `--purge` also removes files |
 | `codexs home <profile>` | Print a profile's Codex home |
 | `codexs doctor` | Check platform, store, and Codex CLI availability |
@@ -150,6 +151,21 @@ printf '%s' "$NEW_OPENAI_API_KEY" | ./codexs update work --api-key-stdin
 ```
 
 `doctor` checks the current platform, profile store, profile count, `codex` binary, and `codex --version`.
+
+### Reload credentials after editing auth.json
+
+After changing a profile's `auth.json`, stop the profile background servers before launching again:
+
+```sh
+./codexs stop
+./codexs run work
+```
+
+`stop` calls `codex app-server daemon stop` with each registered profile's `CODEX_HOME`. It targets all profiles in the current store (including a custom `CODEXS_HOME`), leaving the default `~/.codex` server and other stores alone. Connected profile tasks are interrupted; configuration, credentials, and saved history are retained. Profiles with no running server are also handled by Codex's stop command.
+
+The next normal `run` can start a fresh background server and load the profile's current file-based credentials. `run` does not add `--no-daemon`. Stop after editing the file, and avoid starting another client for that profile between cleanup and your next launch. This clears background authentication state; if you explicitly configured a different credential source, that source still applies.
+
+This command requires a Codex CLI version that supports `app-server daemon stop`. It reports failures per profile, attempts the remaining profiles, and exits nonzero if any stop command fails. It does not delete credentials or kill processes by name.
 
 ## Storage layout
 

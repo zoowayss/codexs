@@ -79,6 +79,8 @@ func (c *CLI) Run(args []string) int {
 		return c.cmdOpen(args[1:])
 	case "resume":
 		return c.cmdResume(args[1:])
+	case "stop":
+		return c.cmdStop(args[1:])
 	case "doctor":
 		return c.cmdDoctor(args[1:])
 	default:
@@ -100,6 +102,7 @@ Usage:
   codexs run <profile> [-- <codex args...>]
   codexs open <profile>... [-- <codex args...>]
   codexs resume <sessionId>
+  codexs stop
   codexs delete <profile> [--purge]
   codexs doctor
   codexs names
@@ -111,6 +114,10 @@ Examples:
   codexs run work -- -C /path/to/repo
   codexs open work side-project -- -C /path/to/repo
   codexs resume 019ea0e2-d130-7022-a3bd-e92e28e22397
+  codexs stop
+
+stop interrupts background tasks for all profiles in the current store.
+The default ~/.codex background server, credentials, and history are preserved.
 
 `)
 }
